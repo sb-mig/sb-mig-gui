@@ -137,12 +137,12 @@ Go to your GitHub repository:
 
 Add these 5 secrets:
 
-| Secret Name                    | Value                               | Example                             |
-| ------------------------------ | ----------------------------------- | ----------------------------------- |
-| `APPLE_CERTIFICATE`            | Content of `certificate-base64.txt` | `MIIKkAIBAzCCCkoGCS...` (very long) |
-| `APPLE_CERTIFICATE_PASSWORD`   | Password from step 2.2              | `MySecureP@ssw0rd`                  |
-| `APPLE_ID`                     | Your Apple ID email                 | `you@example.com`                   |
-| `APPLE_ID_PASSWORD`            | App-specific password from step 3   | `xxxx-xxxx-xxxx-xxxx`               |
+| Secret Name                  | Value                               | Example                             |
+| ---------------------------- | ----------------------------------- | ----------------------------------- |
+| `APPLE_CERTIFICATE`          | Content of `certificate-base64.txt` | `MIIKkAIBAzCCCkoGCS...` (very long) |
+| `APPLE_CERTIFICATE_PASSWORD` | Password from step 2.2              | `MySecureP@ssw0rd`                  |
+| `APPLE_ID`                   | Your Apple ID email                 | `you@example.com`                   |
+| `APPLE_ID_PASSWORD`          | App-specific password from step 3   | `xxxx-xxxx-xxxx-xxxx`               |
 
 > **Note:** Team ID is hardcoded in `package.json` under `build.mac.notarize.teamId` - no secret needed!
 
@@ -281,10 +281,7 @@ The release workflow needs to import the certificate before building. Here's the
 3. `APPLE_ID`
 4. `APPLE_ID_PASSWORD`
 
-> Team ID is hardcoded in `package.json` - no secret needed!
-3. `APPLE_ID`
-4. `APPLE_ID_PASSWORD`
-5. `APPLE_TEAM_ID`
+> Team ID is hardcoded in `package.json` - no secret needed! 3. `APPLE_ID` 4. `APPLE_ID_PASSWORD` 5. `APPLE_TEAM_ID`
 
 ---
 

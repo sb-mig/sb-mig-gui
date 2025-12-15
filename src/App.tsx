@@ -871,18 +871,75 @@ function App() {
               </div>
 
               <div className="border border-border rounded-lg overflow-hidden">
-                <div className="px-3 py-2 bg-card border-b border-border">
+                <div className="px-3 py-2 bg-card border-b border-border flex items-center justify-between">
                   <span className="text-sm font-medium">Destination Folder</span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setDestinationMode('text')}
+                      className={`px-2 py-1 text-xs rounded ${
+                        destinationMode === 'text'
+                          ? 'bg-primary/20 text-primary'
+                          : 'text-muted-foreground hover:bg-muted'
+                      }`}
+                    >
+                      Path
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDestinationMode('browse')
+                        if (targetSpaceId && targetStoryTree.length === 0) {
+                          loadTargetStories(targetSpaceId)
+                        }
+                      }}
+                      className={`px-2 py-1 text-xs rounded ${
+                        destinationMode === 'browse'
+                          ? 'bg-primary/20 text-primary'
+                          : 'text-muted-foreground hover:bg-muted'
+                      }`}
+                    >
+                      Browse
+                    </button>
+                  </div>
                 </div>
-                <div className="p-4">
-                  <Input
-                    value={destinationPath}
-                    onChange={(e) => setDestinationPath(e.target.value)}
-                    placeholder="e.g., en/blog or leave empty for root"
-                  />
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Enter the full slug of the destination folder, or leave empty for root.
-                  </p>
+                <div className="h-[368px] overflow-y-auto">
+                  {destinationMode === 'text' ? (
+                    <div className="p-4 space-y-3">
+                      <Input
+                        value={destinationPath}
+                        onChange={(e) => setDestinationPath(e.target.value)}
+                        placeholder="e.g., en/blog or leave empty for root"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Enter the full slug of the destination folder, or leave empty to copy to root level.
+                      </p>
+                      {destinationPath && (
+                        <div className="p-3 bg-muted rounded-lg">
+                          <p className="text-sm">
+                            Stories will be copied to:{' '}
+                            <span className="text-primary font-mono">/{destinationPath}/</span>
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      {!targetSpaceId ? (
+                        <div className="flex items-center justify-center h-full text-muted-foreground">
+                          Select a target space first
+                        </div>
+                      ) : isLoadingTargetTree ? (
+                        <div className="flex items-center justify-center h-full">
+                          <Spinner size="lg" />
+                        </div>
+                      ) : (
+                        <DestinationFolderPicker
+                          nodes={targetStoryTree}
+                          selectedPath={destinationPath}
+                          onSelect={setDestinationPath}
+                        />
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -1270,6 +1327,115 @@ function VirtualStoryTree({
           )
         })}
       </div>
+    </div>
+  )
+}
+
+/**
+ * Destination folder picker for selecting target folder
+ */
+function DestinationFolderPicker({
+  nodes,
+  selectedPath,
+  onSelect,
+  level = 0,
+}: {
+  nodes: StoryblokTreeNode[]
+  selectedPath: string
+  onSelect: (path: string) => void
+  level?: number
+}) {
+  const [expandedFolders, setExpandedFolders] = useState<Set<number>>(new Set())
+
+  const toggleExpand = (nodeId: number) => {
+    setExpandedFolders((prev) => {
+      const next = new Set(prev)
+      if (next.has(nodeId)) {
+        next.delete(nodeId)
+      } else {
+        next.add(nodeId)
+      }
+      return next
+    })
+  }
+
+  if (nodes.length === 0 && level === 0) {
+    return (
+      <div className="p-3 space-y-2">
+        <button
+          onClick={() => onSelect('')}
+          className={`w-full text-left px-3 py-2 rounded text-sm ${
+            selectedPath === ''
+              ? 'bg-primary/20 text-primary'
+              : 'text-foreground hover:bg-muted'
+          }`}
+        >
+          📁 Root (no parent folder)
+        </button>
+        <p className="text-xs text-muted-foreground">No folders found in target space</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className={level === 0 ? 'p-3 space-y-1' : 'space-y-1'}>
+      {level === 0 && (
+        <button
+          onClick={() => onSelect('')}
+          className={`w-full text-left px-3 py-2 rounded text-sm ${
+            selectedPath === ''
+              ? 'bg-primary/20 text-primary'
+              : 'text-foreground hover:bg-muted'
+          }`}
+        >
+          📁 Root (no parent folder)
+        </button>
+      )}
+      {nodes.map((node) => (
+        <div key={node.id}>
+          <div
+            className={`flex items-center gap-2 px-3 py-1.5 rounded cursor-pointer ${
+              selectedPath === node.full_slug
+                ? 'bg-primary/20 text-primary'
+                : 'text-foreground hover:bg-muted'
+            }`}
+            style={{ paddingLeft: `${level * 16 + 12}px` }}
+          >
+            {node.children.length > 0 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  toggleExpand(node.id)
+                }}
+                className="w-4 h-4 flex items-center justify-center text-muted-foreground"
+              >
+                <svg
+                  className={`w-3 h-3 transition-transform ${expandedFolders.has(node.id) ? 'rotate-90' : ''}`}
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path d="M6 6L14 10L6 14V6Z" />
+                </svg>
+              </button>
+            )}
+            {node.children.length === 0 && <div className="w-4" />}
+            <button
+              onClick={() => onSelect(node.full_slug)}
+              className="flex-1 text-left text-sm truncate"
+            >
+              📁 {node.name}
+            </button>
+          </div>
+          {expandedFolders.has(node.id) && node.children.length > 0 && (
+            <DestinationFolderPicker
+              nodes={node.children}
+              selectedPath={selectedPath}
+              onSelect={onSelect}
+              level={level + 1}
+            />
+          )}
+        </div>
+      ))}
     </div>
   )
 }

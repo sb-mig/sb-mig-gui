@@ -84,3 +84,16 @@
   line-height: 1.5;
 }
 
+/* Window dragging for custom title bar */
+.draggable {
+  -webkit-app-region: drag;
+}
+
+.draggable button,
+.draggable a,
+.draggable input,
+.draggable select,
+.draggable [role="button"] {
+  -webkit-app-region: no-drag;
+}
+

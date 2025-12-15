@@ -25,6 +25,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
       
+      - name: Rebuild native modules for Electron
+        run: npx electron-rebuild
+      
       - name: Build macOS (arm64)
         run: npm run dist:mac:arm64
         env:
@@ -59,6 +62,9 @@ jobs:
       
       - name: Install dependencies
         run: npm ci
+      
+      - name: Rebuild native modules for Electron
+        run: npx electron-rebuild
       
       - name: Build Windows
         run: npm run dist:win
@@ -106,4 +112,3 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

@@ -137,13 +137,13 @@ Go to your GitHub repository:
 
 Add these 5 secrets:
 
-| Secret Name                  | Value                               | Example                             |
-| ---------------------------- | ----------------------------------- | ----------------------------------- |
-| `APPLE_CERTIFICATE`          | Content of `certificate-base64.txt` | `MIIKkAIBAzCCCkoGCS...` (very long) |
-| `APPLE_CERTIFICATE_PASSWORD` | Password from step 2.2              | `MySecureP@ssw0rd`                  |
-| `APPLE_ID`                   | Your Apple ID email                 | `you@example.com`                   |
-| `APPLE_ID_PASSWORD`          | App-specific password from step 3   | `xxxx-xxxx-xxxx-xxxx`               |
-| `APPLE_TEAM_ID`              | Team ID from step 4                 | `BBDY3ZEHGH`                        |
+| Secret Name                    | Value                               | Example                             |
+| ------------------------------ | ----------------------------------- | ----------------------------------- |
+| `APPLE_CERTIFICATE`            | Content of `certificate-base64.txt` | `MIIKkAIBAzCCCkoGCS...` (very long) |
+| `APPLE_CERTIFICATE_PASSWORD`   | Password from step 2.2              | `MySecureP@ssw0rd`                  |
+| `APPLE_ID`                     | Your Apple ID email                 | `you@example.com`                   |
+| `APPLE_APP_SPECIFIC_PASSWORD`  | App-specific password from step 3   | `xxxx-xxxx-xxxx-xxxx`               |
+| `APPLE_TEAM_ID`                | Team ID from step 4                 | `BBDY3ZEHGH`                        |
 
 ---
 
@@ -277,6 +277,9 @@ The release workflow needs to import the certificate before building. Here's the
 
 1. `APPLE_CERTIFICATE`
 2. `APPLE_CERTIFICATE_PASSWORD`
+3. `APPLE_ID`
+4. `APPLE_APP_SPECIFIC_PASSWORD`
+5. `APPLE_TEAM_ID`
 3. `APPLE_ID`
 4. `APPLE_ID_PASSWORD`
 5. `APPLE_TEAM_ID`

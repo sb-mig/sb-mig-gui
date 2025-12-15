@@ -1,5 +1,11 @@
 # sb-mig-gui
 
+## 1.1.0
+
+### Minor Changes
+
+- 633344c: fix the build again
+
 ## 1.0.2
 
 ### Patch Changes

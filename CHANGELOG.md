@@ -1,5 +1,11 @@
 # sb-mig-gui
 
+## 1.1.1
+
+### Patch Changes
+
+- 69bfd59: fix github action envs
+
 ## 1.1.0
 
 ### Minor Changes

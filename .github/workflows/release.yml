@@ -1,9 +1,12 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (leave empty to use package.json version)'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -88,6 +91,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       
+      - name: Get version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION=$(node -p "require('./package.json').version")
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "📦 Releasing version: $VERSION"
+      
       - name: Download macOS artifacts
         uses: actions/download-artifact@v4
         with:
@@ -106,6 +121,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.tag }}
           files: release/*
           draft: false
           prerelease: false

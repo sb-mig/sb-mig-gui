@@ -31,8 +31,13 @@ npm run dev
 # Build for production
 npm run build
 
-# Create distributable (macOS)
-npm run dist:mac
+# Create distributable
+npm run dist           # Default platform
+npm run dist:mac       # macOS (default arch)
+npm run dist:mac:arm64 # macOS Apple Silicon
+npm run dist:mac:x64   # macOS Intel
+npm run dist:win       # Windows
+npm run dist:linux     # Linux
 ```
 
 ## Configuration
@@ -41,6 +46,42 @@ npm run dist:mac
 2. **Space ID** - Find your space ID in Storyblok's space settings
 3. **Access Token** - Create a preview token in your space's settings
 4. **Working Directory** - Select your project folder containing `storyblok.config.js`
+
+## Versioning & Releases
+
+This project uses [Changesets](https://github.com/changesets/changesets) for version management.
+
+### Creating a Changeset
+
+When you make changes that should be released:
+
+```bash
+npm run changeset
+```
+
+This will prompt you to:
+1. Select what kind of change (patch/minor/major)
+2. Write a summary of the changes
+
+Commit the changeset file with your changes.
+
+### Release Process
+
+1. **Automated Version PR**: When changesets are merged to `main`, a PR is automatically created to bump versions
+2. **Merge Version PR**: When the version PR is merged, a git tag is created
+3. **Automated Builds**: The tag triggers GitHub Actions to build for macOS and Windows
+4. **GitHub Release**: Artifacts are automatically uploaded to a GitHub Release
+
+### Manual Versioning
+
+```bash
+# Bump version based on changesets
+npm run changeset:version
+
+# Create git tag
+git tag v1.x.x
+git push origin v1.x.x
+```
 
 ## Tech Stack
 

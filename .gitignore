@@ -1,37 +1,94 @@
 # Dependencies
 node_modules/
+.pnp
+.pnp.js
 
 # Build outputs
 dist/
 dist-electron/
 release/
+out/
+*.local
 
-# Database
+# Electron builder
+.electron-builder/
+builder-effective-config.yaml
+builder-debug.yml
+
+# Database files (SQLite)
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
+
+# Generated icons (keep build folder structure, ignore generated icons)
+build/*.icns
+build/*.ico
+build/*.iconset/
+build/icons/
 
 # IDE
-.vscode/
 .idea/
-*.swp
-*.swo
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
-# OS files
+# OS
 .DS_Store
+.DS_Store?
+._*
 Thumbs.db
+ehthumbs.db
+Desktop.ini
 
-# Environment
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# Environment (contains secrets!)
 .env
 .env.local
 .env.*.local
+.env.development
+.env.production
+.env.staging
 
-# Logs
-*.log
-npm-debug.log*
+# Temporary files
+*.tmp
+*.temp
+.cache/
+*.bak
 
 # TypeScript
 *.tsbuildinfo
 
-# Testing
-coverage/
+# Misc
+.eslintcache
+.stylelintcache
 
+# Vite
+.vite/
+
+# Turbo (if used in future)
+.turbo/
+
+# macOS code signing
+*.provisionprofile
+
+# Native module build artifacts
+build/Release/
+prebuilds/

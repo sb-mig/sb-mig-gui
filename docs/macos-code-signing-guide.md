@@ -143,7 +143,8 @@ Add these 5 secrets:
 | `APPLE_CERTIFICATE_PASSWORD`   | Password from step 2.2              | `MySecureP@ssw0rd`                  |
 | `APPLE_ID`                     | Your Apple ID email                 | `you@example.com`                   |
 | `APPLE_ID_PASSWORD`            | App-specific password from step 3   | `xxxx-xxxx-xxxx-xxxx`               |
-| `APPLE_TEAM_ID`                | Team ID from step 4                 | `BBDY3ZEHGH`                        |
+
+> **Note:** Team ID is hardcoded in `package.json` under `build.mac.notarize.teamId` - no secret needed!
 
 ---
 
@@ -279,7 +280,8 @@ The release workflow needs to import the certificate before building. Here's the
 2. `APPLE_CERTIFICATE_PASSWORD`
 3. `APPLE_ID`
 4. `APPLE_ID_PASSWORD`
-5. `APPLE_TEAM_ID`
+
+> Team ID is hardcoded in `package.json` - no secret needed!
 3. `APPLE_ID`
 4. `APPLE_ID_PASSWORD`
 5. `APPLE_TEAM_ID`

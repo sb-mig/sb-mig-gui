@@ -102,6 +102,13 @@ declare global {
     errors: string[]
   }
 
+  interface ApiV2SyncResult {
+    created: string[]
+    updated: string[]
+    skipped: string[]
+    errors: { name: string; message: string }[]
+  }
+
   // Window API
   interface SbmigGuiAPI {
     db: {
@@ -144,6 +151,48 @@ declare global {
         oauthToken: string
       ) => Promise<StoryblokCopyResult>
       onCopyProgress: (callback: (progress: StoryblokCopyProgress) => void) => () => void
+    }
+
+    apiV2: {
+      fetchStories: (spaceId: string, oauthToken: string) => Promise<StoryblokFetchStoriesResult>
+      fetchStory: (spaceId: string, storyId: number, oauthToken: string) => Promise<StoryblokStory>
+      getStoryBySlug: (
+        spaceId: string,
+        slug: string,
+        oauthToken: string
+      ) => Promise<StoryblokStory | null>
+      copyStories: (
+        sourceSpaceId: string,
+        targetSpaceId: string,
+        storyIds: number[],
+        destinationParentId: number | null,
+        oauthToken: string
+      ) => Promise<StoryblokCopyResult>
+      onCopyProgress: (callback: (progress: StoryblokCopyProgress) => void) => () => void
+
+      discoverComponents: (workingDir: string) => Promise<SbmigDiscoveredComponent[]>
+      discoverDatasources: (workingDir: string) => Promise<SbmigDiscoveredComponent[]>
+      discoverRoles: (workingDir: string) => Promise<SbmigDiscoveredComponent[]>
+
+      syncRoles: (spaceId: string, oauthToken: string, roles: any[], dryRun?: boolean) => Promise<ApiV2SyncResult>
+      syncDatasources: (
+        spaceId: string,
+        oauthToken: string,
+        datasources: any[],
+        dryRun?: boolean
+      ) => Promise<ApiV2SyncResult>
+      syncComponents: (
+        spaceId: string,
+        oauthToken: string,
+        components: any[],
+        options?: { presets?: boolean; ssot?: boolean; dryRun?: boolean }
+      ) => Promise<ApiV2SyncResult>
+      syncPlugins: (
+        spaceId: string,
+        oauthToken: string,
+        plugins: { name: string; body: string }[],
+        dryRun?: boolean
+      ) => Promise<ApiV2SyncResult>
     }
   }
 

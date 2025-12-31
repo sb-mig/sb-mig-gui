@@ -27,11 +27,19 @@ type ResourceType = "components" | "datasources" | "roles";
 type AppView = "main" | "settings";
 
 /**
+ * Execution mode - API uses sb-mig api-v2, CLI spawns sb-mig commands
+ */
+type ExecutionMode = "api" | "cli";
+
+/**
  * sb-mig GUI - Main Application
  */
 function App() {
   // View state
   const [currentView, setCurrentView] = useState<AppView>("main");
+
+  // Execution mode (api = direct api-v2, cli = spawn sb-mig commands)
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("api");
 
   // Configuration state
   const [oauthToken, setOauthToken] = useState("");
@@ -128,6 +136,14 @@ function App() {
           }
         }
         if (savedActiveSpace) setActiveSpaceId(savedActiveSpace);
+
+        // Load execution mode preference
+        const savedExecutionMode = await window.sbmigGui.db.getSetting(
+          "sbmig_execution_mode"
+        );
+        if (savedExecutionMode === "api" || savedExecutionMode === "cli") {
+          setExecutionMode(savedExecutionMode);
+        }
       } catch (error) {
         // Failed to load config
       } finally {
@@ -286,17 +302,22 @@ function App() {
       let resources: SbmigDiscoveredComponent[] = [];
       switch (type) {
         case "components":
-          resources = await window.sbmigGui.sbmig.discoverComponents(
-            workingDir
-          );
+          resources =
+            executionMode === "api"
+              ? await window.sbmigGui.apiV2.discoverComponents(workingDir)
+              : await window.sbmigGui.sbmig.discoverComponents(workingDir);
           break;
         case "datasources":
-          resources = await window.sbmigGui.sbmig.discoverDatasources(
-            workingDir
-          );
+          resources =
+            executionMode === "api"
+              ? await window.sbmigGui.apiV2.discoverDatasources(workingDir)
+              : await window.sbmigGui.sbmig.discoverDatasources(workingDir);
           break;
         case "roles":
-          resources = await window.sbmigGui.sbmig.discoverRoles(workingDir);
+          resources =
+            executionMode === "api"
+              ? await window.sbmigGui.apiV2.discoverRoles(workingDir)
+              : await window.sbmigGui.sbmig.discoverRoles(workingDir);
           break;
       }
       setDiscoveredResources(resources);
@@ -320,7 +341,7 @@ function App() {
     setExpandedFolders(new Set());
 
     try {
-      const result = await window.sbmigGui.storyblok.fetchStories(
+      const result = await window.sbmigGui.apiV2.fetchStories(
         space.spaceId,
         oauthToken
       );
@@ -343,7 +364,7 @@ function App() {
     setTargetStoryTree([]);
 
     try {
-      const result = await window.sbmigGui.storyblok.fetchStories(
+      const result = await window.sbmigGui.apiV2.fetchStories(
         space.spaceId,
         oauthToken
       );
@@ -458,14 +479,14 @@ function App() {
       status: "pending",
     });
 
-    const unsubscribe = window.sbmigGui.storyblok.onCopyProgress((progress) => {
+    const unsubscribe = window.sbmigGui.apiV2.onCopyProgress((progress) => {
       setCopyProgress(progress);
     });
 
     try {
       let destinationParentId: number | null = null;
       if (destinationPath.trim()) {
-        const destStory = await window.sbmigGui.storyblok.getStoryBySlug(
+        const destStory = await window.sbmigGui.apiV2.getStoryBySlug(
           targetSpace.spaceId,
           destinationPath.trim(),
           oauthToken
@@ -475,7 +496,7 @@ function App() {
         }
       }
 
-      const result = await window.sbmigGui.storyblok.copyStories(
+      const result = await window.sbmigGui.apiV2.copyStories(
         sourceSpace.spaceId,
         targetSpace.spaceId,
         Array.from(selectedStoryIds),
@@ -613,13 +634,49 @@ function App() {
                 <span className="text-2xl">📦</span> Storyblok Manager
               </h1>
               <p className="text-muted-foreground text-sm mt-1">
-                sb-mig v{sbmigVersion || "unknown"} • Manage your Storyblok
-                spaces
+                sb-mig v{sbmigVersion || "unknown"} •{" "}
+                {executionMode === "api" ? "Direct API mode" : "CLI mode"}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Execution Mode Toggle */}
+            <div className="flex items-center gap-1 p-1 rounded-lg bg-app-900 border border-border">
+              <button
+                onClick={async () => {
+                  setExecutionMode("api");
+                  await window.sbmigGui.db.setSetting(
+                    "sbmig_execution_mode",
+                    "api"
+                  );
+                }}
+                className={`px-3 py-1 rounded text-xs font-medium transition-all ${
+                  executionMode === "api"
+                    ? "bg-storyblok-green text-white shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                ⚡ API
+              </button>
+              <button
+                onClick={async () => {
+                  setExecutionMode("cli");
+                  await window.sbmigGui.db.setSetting(
+                    "sbmig_execution_mode",
+                    "cli"
+                  );
+                }}
+                className={`px-3 py-1 rounded text-xs font-medium transition-all ${
+                  executionMode === "cli"
+                    ? "bg-amber-500 text-white shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                💻 CLI
+              </button>
+            </div>
+
             {/* Status indicators */}
             {validationResult && (
               <span
@@ -733,170 +790,380 @@ function App() {
             </Button>
           </div>
 
-          {/* Right Panel: Operations & Output */}
+          {/* Right Panel: Mode-specific UI */}
           <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Operations Bar */}
-            <div className="flex-shrink-0 p-4 border-b border-border">
-              <div className="flex flex-wrap gap-2">
-                <div className="flex items-center gap-1 pr-3 border-r border-border">
-                  <span className="text-xs text-muted-foreground uppercase mr-2">
-                    Sync
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => openResourcePicker("components", "sync")}
-                    disabled={isRunning || !activeSpaceId}
-                  >
-                    Components
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => openResourcePicker("datasources", "sync")}
-                    disabled={isRunning || !activeSpaceId}
-                  >
-                    Datasources
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => openResourcePicker("roles", "sync")}
-                    disabled={isRunning || !activeSpaceId}
-                  >
-                    Roles
-                  </Button>
-                </div>
-
-                <div className="flex items-center gap-1 pr-3 border-r border-border">
-                  <span className="text-xs text-muted-foreground uppercase mr-2">
-                    Backup
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => openResourcePicker("components", "backup")}
-                    disabled={isRunning || !activeSpaceId}
-                  >
-                    Components
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() =>
-                      executeCommand("backup", ["stories", "--all"])
-                    }
-                    disabled={isRunning || !activeSpaceId}
-                  >
-                    Stories
-                  </Button>
-                </div>
-
-                <div className="flex items-center gap-1 pr-3 border-r border-border">
-                  <span className="text-xs text-muted-foreground uppercase mr-2">
-                    Copy
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => setShowStoryCopyModal(true)}
-                    disabled={isRunning || spaces.length < 1}
-                  >
-                    Stories
-                  </Button>
-                </div>
-
-                <div className="flex items-center gap-1 pr-3 border-r border-border">
-                  <span className="text-xs text-muted-foreground uppercase mr-2">
-                    Other
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() =>
-                      executeCommand("discover", ["components", "--all"])
-                    }
-                    disabled={isRunning || !activeSpaceId}
-                  >
-                    Discover
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => executeCommand("debug", [])}
-                    disabled={isRunning || !activeSpaceId}
-                  >
-                    Debug
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={handleValidate}
-                    disabled={isRunning || !activeSpaceId}
-                  >
-                    Validate
-                  </Button>
-                </div>
-
-                {isRunning && (
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={handleKillProcess}
-                  >
-                    ⏹️ Stop
-                  </Button>
-                )}
-              </div>
-            </div>
-
-            {/* Terminal Output */}
-            <div className="flex-1 flex flex-col overflow-hidden">
-              {/* Terminal Header */}
-              <div className="flex items-center justify-between px-4 py-2 bg-app-950 border-b border-border">
-                <span className="text-xs text-muted-foreground uppercase tracking-wider">
-                  Output
-                </span>
-                <div className="flex items-center gap-2">
-                  <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={autoScroll}
-                      onChange={(e) => setAutoScroll(e.target.checked)}
-                      className="rounded"
-                    />
-                    Auto-scroll
-                  </label>
-                  <Button variant="ghost" size="sm" onClick={clearOutput}>
-                    Clear
-                  </Button>
-                </div>
-              </div>
-
-              {/* Terminal Content */}
-              <div
-                ref={outputRef}
-                className="flex-1 overflow-y-auto p-4 bg-app-950 terminal-output"
-              >
-                {output.length === 0 ? (
-                  <div className="text-muted-foreground italic">
-                    No output yet. Select a space and run a command to see
-                    results here.
-                  </div>
-                ) : (
-                  output.map((line) => (
-                    <div
-                      key={line.id}
-                      className={`whitespace-pre-wrap ${getLineColor(
-                        line.type
-                      )}`}
-                    >
-                      {line.data}
+            {executionMode === "cli" ? (
+              /* ========== CLI MODE UI ========== */
+              <>
+                {/* Operations Bar */}
+                <div className="flex-shrink-0 p-4 border-b border-border">
+                  <div className="flex flex-wrap gap-2">
+                    <div className="flex items-center gap-1 pr-3 border-r border-border">
+                      <span className="text-xs text-muted-foreground uppercase mr-2">
+                        Sync
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => openResourcePicker("components", "sync")}
+                        disabled={isRunning || !activeSpaceId}
+                      >
+                        Components
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          openResourcePicker("datasources", "sync")
+                        }
+                        disabled={isRunning || !activeSpaceId}
+                      >
+                        Datasources
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => openResourcePicker("roles", "sync")}
+                        disabled={isRunning || !activeSpaceId}
+                      >
+                        Roles
+                      </Button>
                     </div>
-                  ))
-                )}
+
+                    <div className="flex items-center gap-1 pr-3 border-r border-border">
+                      <span className="text-xs text-muted-foreground uppercase mr-2">
+                        Backup
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          openResourcePicker("components", "backup")
+                        }
+                        disabled={isRunning || !activeSpaceId}
+                      >
+                        Components
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          executeCommand("backup", ["stories", "--all"])
+                        }
+                        disabled={isRunning || !activeSpaceId}
+                      >
+                        Stories
+                      </Button>
+                    </div>
+
+                    <div className="flex items-center gap-1 pr-3 border-r border-border">
+                      <span className="text-xs text-muted-foreground uppercase mr-2">
+                        Copy
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setShowStoryCopyModal(true)}
+                        disabled={isRunning || spaces.length < 1}
+                      >
+                        Stories
+                      </Button>
+                    </div>
+
+                    <div className="flex items-center gap-1 pr-3 border-r border-border">
+                      <span className="text-xs text-muted-foreground uppercase mr-2">
+                        Other
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          executeCommand("discover", ["components", "--all"])
+                        }
+                        disabled={isRunning || !activeSpaceId}
+                      >
+                        Discover
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => executeCommand("debug", [])}
+                        disabled={isRunning || !activeSpaceId}
+                      >
+                        Debug
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={handleValidate}
+                        disabled={isRunning || !activeSpaceId}
+                      >
+                        Validate
+                      </Button>
+                    </div>
+
+                    {isRunning && (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={handleKillProcess}
+                      >
+                        ⏹️ Stop
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Terminal Output */}
+                <div className="flex-1 flex flex-col overflow-hidden">
+                  {/* Terminal Header */}
+                  <div className="flex items-center justify-between px-4 py-2 bg-app-950 border-b border-border">
+                    <span className="text-xs text-muted-foreground uppercase tracking-wider">
+                      Terminal Output
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={autoScroll}
+                          onChange={(e) => setAutoScroll(e.target.checked)}
+                          className="rounded"
+                        />
+                        Auto-scroll
+                      </label>
+                      <Button variant="ghost" size="sm" onClick={clearOutput}>
+                        Clear
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Terminal Content */}
+                  <div
+                    ref={outputRef}
+                    className="flex-1 overflow-y-auto p-4 bg-app-950 terminal-output font-mono text-sm"
+                  >
+                    {output.length === 0 ? (
+                      <div className="text-muted-foreground italic">
+                        No output yet. Select a space and run a command to see
+                        results here.
+                      </div>
+                    ) : (
+                      output.map((line) => (
+                        <div
+                          key={line.id}
+                          className={`whitespace-pre-wrap ${getLineColor(
+                            line.type
+                          )}`}
+                        >
+                          {line.data}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : (
+              /* ========== API MODE UI ========== */
+              <div className="flex-1 overflow-y-auto p-6">
+                <div className="max-w-4xl mx-auto space-y-6">
+                  {/* API Mode Header */}
+                  <div className="text-center mb-8">
+                    <h2 className="text-2xl font-bold text-foreground mb-2">
+                      ⚡ Direct API Mode
+                    </h2>
+                    <p className="text-muted-foreground">
+                      Fast, structured operations using sb-mig API v2
+                    </p>
+                  </div>
+
+                  {/* Available Operations */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Copy Stories Card */}
+                    <div className="bg-card border border-border rounded-xl p-6 hover:border-primary/50 transition-colors">
+                      <div className="flex items-start gap-4">
+                        <div className="w-12 h-12 rounded-lg bg-storyblok-green/20 flex items-center justify-center text-2xl">
+                          📋
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-lg mb-1">
+                            Copy Stories
+                          </h3>
+                          <p className="text-sm text-muted-foreground mb-4">
+                            Copy stories between spaces with folder structure
+                            preserved
+                          </p>
+                          <Button
+                            onClick={() => setShowStoryCopyModal(true)}
+                            disabled={spaces.length < 1}
+                            className="w-full"
+                          >
+                            Open Story Copy
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Browse Stories Card */}
+                    <div className="bg-card border border-border rounded-xl p-6 hover:border-primary/50 transition-colors">
+                      <div className="flex items-start gap-4">
+                        <div className="w-12 h-12 rounded-lg bg-blue-500/20 flex items-center justify-center text-2xl">
+                          🗂️
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-lg mb-1">
+                            Browse Stories
+                          </h3>
+                          <p className="text-sm text-muted-foreground mb-4">
+                            View story tree structure from any space
+                          </p>
+                          <Button
+                            variant="secondary"
+                            onClick={() => {
+                              if (activeSpace) {
+                                setSourceSpaceId(activeSpace.id);
+                                loadSourceStories(activeSpace.id);
+                                setShowStoryCopyModal(true);
+                              }
+                            }}
+                            disabled={!activeSpaceId}
+                            className="w-full"
+                          >
+                            Browse Current Space
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Discover Resources Card */}
+                    <div className="bg-card border border-border rounded-xl p-6 hover:border-primary/50 transition-colors">
+                      <div className="flex items-start gap-4">
+                        <div className="w-12 h-12 rounded-lg bg-purple-500/20 flex items-center justify-center text-2xl">
+                          🔍
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-lg mb-1">
+                            Discover Resources
+                          </h3>
+                          <p className="text-sm text-muted-foreground mb-4">
+                            Find components, datasources, and roles in your
+                            project
+                          </p>
+                          <div className="flex gap-2">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() =>
+                                openResourcePicker("components", "sync")
+                              }
+                              disabled={!activeSpaceId}
+                            >
+                              Components
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() =>
+                                openResourcePicker("datasources", "sync")
+                              }
+                              disabled={!activeSpaceId}
+                            >
+                              Datasources
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() =>
+                                openResourcePicker("roles", "sync")
+                              }
+                              disabled={!activeSpaceId}
+                            >
+                              Roles
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Coming Soon Card */}
+                    <div className="bg-card/50 border border-border/50 rounded-xl p-6 opacity-60">
+                      <div className="flex items-start gap-4">
+                        <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center text-2xl">
+                          🚧
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-lg mb-1">
+                            More Coming Soon
+                          </h3>
+                          <p className="text-sm text-muted-foreground mb-4">
+                            Sync & Backup via API v2 are in development
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Switch to CLI mode for full sync/backup
+                            functionality
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Status/Recent Activity */}
+                  {copyProgress && (
+                    <div className="bg-card border border-border rounded-xl p-6">
+                      <h3 className="font-semibold mb-4">Copy Progress</h3>
+                      <div className="space-y-3">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Status:</span>
+                          <span
+                            className={
+                              copyProgress.status === "done"
+                                ? "text-storyblok-green"
+                                : copyProgress.status === "error"
+                                ? "text-destructive"
+                                : "text-yellow-400"
+                            }
+                          >
+                            {copyProgress.status === "done"
+                              ? "✅ Complete"
+                              : copyProgress.status === "error"
+                              ? "❌ Error"
+                              : "⏳ " + copyProgress.currentStory}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">
+                            Progress:
+                          </span>
+                          <span>
+                            {copyProgress.current} / {copyProgress.total}
+                          </span>
+                        </div>
+                        <div className="w-full bg-muted rounded-full h-2">
+                          <div
+                            className="bg-storyblok-green h-2 rounded-full transition-all"
+                            style={{
+                              width: `${
+                                (copyProgress.current / copyProgress.total) *
+                                100
+                              }%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Info Box */}
+                  <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4">
+                    <p className="text-sm text-blue-400">
+                      <strong>💡 Tip:</strong> API mode provides faster
+                      operations with structured responses. For full CLI
+                      functionality (sync, backup, debug), switch to CLI mode
+                      using the toggle in the header.
+                    </p>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       )}
@@ -1292,7 +1559,7 @@ function VirtualResourceList({
 
           return (
             <div
-              key={resource.name}
+              key={resource.filePath}
               style={{
                 position: "absolute",
                 top: 0,

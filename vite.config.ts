@@ -1,11 +1,11 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import electron from 'vite-plugin-electron'
-import renderer from 'vite-plugin-electron-renderer'
-import { resolve } from 'path'
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import electron from "vite-plugin-electron";
+import renderer from "vite-plugin-electron-renderer";
+import { resolve } from "path";
 
 // Set process title for the Vite dev server
-process.title = 'sb-mig-gui-vite'
+process.title = "sb-mig-gui-vite";
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -14,32 +14,38 @@ export default defineConfig({
     electron([
       {
         // Main process entry
-        entry: 'electron/main/index.ts',
+        entry: "electron/main/index.ts",
         onstart(args) {
-          args.startup()
+          args.startup();
         },
         vite: {
           build: {
-            outDir: 'dist-electron/main',
+            outDir: "dist-electron/main",
             rollupOptions: {
               // External modules that shouldn't be bundled
               // better-sqlite3 is a native module and must be external
-              external: ['electron', 'better-sqlite3'],
+              // sb-mig is our shared library - keep it external to use at runtime
+              external: [
+                "electron",
+                "better-sqlite3",
+                "sb-mig",
+                /^sb-mig\/.*/, // Also externalize sub-paths like sb-mig/api-v2
+              ],
             },
           },
         },
       },
       {
         // Preload script entry
-        entry: 'electron/preload/index.ts',
+        entry: "electron/preload/index.ts",
         onstart(args) {
-          args.reload()
+          args.reload();
         },
         vite: {
           build: {
-            outDir: 'dist-electron/preload',
+            outDir: "dist-electron/preload",
             rollupOptions: {
-              external: ['electron'],
+              external: ["electron"],
             },
           },
         },
@@ -49,17 +55,16 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      '@': resolve(__dirname, 'src'),
-      '@electron': resolve(__dirname, 'electron'),
+      "@": resolve(__dirname, "src"),
+      "@electron": resolve(__dirname, "electron"),
     },
   },
   build: {
-    outDir: 'dist',
+    outDir: "dist",
     emptyOutDir: true,
   },
   server: {
     port: 5174,
     strictPort: true,
   },
-})
-
+});

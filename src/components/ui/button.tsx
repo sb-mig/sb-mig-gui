@@ -4,6 +4,8 @@ import { type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "./button.variants";
 
+// Re-export for consumers
+// eslint-disable-next-line react-refresh/only-export-components
 export { buttonVariants } from "./button.variants";
 
 export interface ButtonProps

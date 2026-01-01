@@ -105,7 +105,7 @@ async function loadComponentFiles(
       delete require.cache[require.resolve(moduleToLoad)];
 
       // Use require for CJS or compiled files
-      // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const loadedModule = require(moduleToLoad);
       const data = loadedModule.default || loadedModule;
 

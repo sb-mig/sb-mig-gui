@@ -3,7 +3,9 @@ import { cn } from "@/lib/utils";
 import { getLineColor } from "./output-line.utils";
 import type { OutputLineData } from "./output-line.utils";
 
+// Re-export types and utilities for consumers
 export type { OutputLineType, OutputLineData } from "./output-line.utils";
+// eslint-disable-next-line react-refresh/only-export-components
 export { getLineColor } from "./output-line.utils";
 
 export interface OutputLineProps {

@@ -1,5 +1,11 @@
 # sb-mig-gui
 
+## 1.2.1
+
+### Patch Changes
+
+- 1826408: fix linux build
+
 ## 1.2.0
 
 ### Minor Changes

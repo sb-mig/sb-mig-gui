@@ -1,5 +1,11 @@
 # sb-mig-gui
 
+## 1.3.0
+
+### Minor Changes
+
+- 73977cb: ts transpilation using surcase
+
 ## 1.2.1
 
 ### Patch Changes

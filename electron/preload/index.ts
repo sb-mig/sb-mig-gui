@@ -368,7 +368,7 @@ const api = {
     syncRoles: (
       spaceId: string,
       oauthToken: string,
-      roles: any[],
+      roles: unknown[],
       dryRun?: boolean
     ): Promise<ApiV2SyncResult> =>
       ipcRenderer.invoke("apiv2:syncRoles", spaceId, oauthToken, roles, dryRun),
@@ -376,7 +376,7 @@ const api = {
     syncDatasources: (
       spaceId: string,
       oauthToken: string,
-      datasources: any[],
+      datasources: unknown[],
       dryRun?: boolean
     ): Promise<ApiV2SyncResult> =>
       ipcRenderer.invoke(
@@ -390,7 +390,7 @@ const api = {
     syncComponents: (
       spaceId: string,
       oauthToken: string,
-      components: any[],
+      components: unknown[],
       options?: { presets?: boolean; ssot?: boolean; dryRun?: boolean }
     ): Promise<ApiV2SyncResult> =>
       ipcRenderer.invoke(

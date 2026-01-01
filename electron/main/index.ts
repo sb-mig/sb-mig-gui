@@ -25,7 +25,7 @@ import {
 interface LoadedComponent {
   name: string;
   filePath: string;
-  data: any;
+  data: unknown;
   error?: string;
 }
 
@@ -40,7 +40,9 @@ async function loadComponentFiles(
 
   // Separate TypeScript and JavaScript files
   const tsFiles = filePaths.filter((f) => f.endsWith(".ts"));
-  const jsFiles = filePaths.filter((f) => !f.endsWith(".ts"));
+  // Note: JS files are loaded directly via require without precompilation
+  const _jsFiles = filePaths.filter((f) => !f.endsWith(".ts"));
+  void _jsFiles; // Used for documentation/future use
 
   // Precompile TypeScript files using sb-mig's Rollup+SWC approach
   const compiledTsFiles: Map<string, string> = new Map();
@@ -103,7 +105,7 @@ async function loadComponentFiles(
       delete require.cache[require.resolve(moduleToLoad)];
 
       // Use require for CJS or compiled files
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
       const loadedModule = require(moduleToLoad);
       const data = loadedModule.default || loadedModule;
 
@@ -220,9 +222,9 @@ app.whenReady().then(async () => {
       location: "electron/main/index.ts:after-test",
       message: "Interop test completed",
       data: {
-        success: Boolean((testResult as any)?.success),
-        method: (testResult as any)?.method,
-        requireErrorPresent: Boolean((testResult as any)?.requireError),
+        success: Boolean((testResult as Record<string, unknown>)?.success),
+        method: (testResult as Record<string, unknown>)?.method,
+        requireErrorPresent: Boolean((testResult as Record<string, unknown>)?.requireError),
       },
       timestamp: Date.now(),
     }),
@@ -554,7 +556,7 @@ function registerIpcHandlers() {
       _event,
       spaceId: string,
       oauthToken: string,
-      roles: any[],
+      roles: unknown[],
       dryRun?: boolean
     ) => {
       const client = createClient({ spaceId, oauthToken });
@@ -568,7 +570,7 @@ function registerIpcHandlers() {
       _event,
       spaceId: string,
       oauthToken: string,
-      datasources: any[],
+      datasources: unknown[],
       dryRun?: boolean
     ) => {
       const client = createClient({ spaceId, oauthToken });
@@ -585,7 +587,7 @@ function registerIpcHandlers() {
       _event,
       spaceId: string,
       oauthToken: string,
-      components: any[],
+      components: unknown[],
       options?: { presets?: boolean; ssot?: boolean; dryRun?: boolean }
     ) => {
       const client = createClient({ spaceId, oauthToken });

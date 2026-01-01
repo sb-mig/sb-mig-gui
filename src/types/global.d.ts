@@ -237,19 +237,19 @@ declare global {
       syncRoles: (
         spaceId: string,
         oauthToken: string,
-        roles: any[],
+        roles: unknown[],
         dryRun?: boolean
       ) => Promise<ApiV2SyncResult>;
       syncDatasources: (
         spaceId: string,
         oauthToken: string,
-        datasources: any[],
+        datasources: unknown[],
         dryRun?: boolean
       ) => Promise<ApiV2SyncResult>;
       syncComponents: (
         spaceId: string,
         oauthToken: string,
-        components: any[],
+        components: unknown[],
         options?: { presets?: boolean; ssot?: boolean; dryRun?: boolean }
       ) => Promise<ApiV2SyncResult>;
       syncPlugins: (

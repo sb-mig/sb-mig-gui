@@ -6,12 +6,11 @@
  */
 
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
-import { join } from "path";
+import { join, basename } from "path";
 import { databaseService } from "../services/database.service";
 import { sbmigService } from "../services/sbmig.service";
 import type { SbmigEnvironment } from "../services/sbmig.service";
 import { storyblokService } from "../services/storyblok.service";
-import { testDynamicImport } from "../services/sbmig-import-test";
 
 // sb-mig api-v2 (CJS-safe via conditional exports)
 import {
@@ -63,12 +62,9 @@ async function loadComponentFiles(
 
     // Add precompile errors to results
     for (const err of precompileResult.errors) {
-      const name =
-        err.input
-          .split("/")
-          .pop()
-          ?.replace(/\.sb\.ts$/, "")
-          .replace(/\.(datasource|roles)\.ts$/, "") || "unknown";
+      const name = basename(err.input)
+        .replace(/\.sb\.ts$/, "")
+        .replace(/\.(datasource|roles)\.ts$/, "") || "unknown";
       results.push({
         name,
         filePath: err.input,
@@ -89,13 +85,10 @@ async function loadComponentFiles(
       continue;
     }
 
-    const name =
-      filePath
-        .split("/")
-        .pop()
-        ?.replace(/\.sb\.(js|cjs|mjs|ts)$/, "")
-        .replace(/\.(datasource|roles)\.(js|cjs|ts)$/, "")
-        .replace(/\.sb\.(datasource|roles)\.(js|cjs|ts)$/, "") || "unknown";
+    const name = basename(filePath)
+      .replace(/\.sb\.(js|cjs|mjs|ts)$/, "")
+      .replace(/\.(datasource|roles)\.(js|cjs|ts)$/, "")
+      .replace(/\.sb\.(datasource|roles)\.(js|cjs|ts)$/, "") || "unknown";
 
     try {
       // Use compiled path for TS files, original path for JS files
@@ -127,29 +120,6 @@ async function loadComponentFiles(
 const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
 
 let mainWindow: BrowserWindow | null = null;
-
-// #region agent log (H1)
-fetch("http://127.0.0.1:7245/ingest/2a8fc3d7-292a-4522-9c3c-c62f7e925b33", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    sessionId: "debug-session",
-    runId: "run1",
-    hypothesisId: "H1",
-    location: "electron/main/index.ts:module-load",
-    message: "Electron main loaded",
-    data: {
-      isDev,
-      typeofRequire: typeof require,
-      typeofModule: typeof module,
-      platform: process.platform,
-      node: process.versions?.node,
-      electron: process.versions?.electron,
-    },
-    timestamp: Date.now(),
-  }),
-}).catch(() => {});
-// #endregion agent log (H1)
 
 /**
  * Create the main application window
@@ -200,36 +170,6 @@ function createWindow() {
 app.whenReady().then(async () => {
   // Initialize database
   databaseService.init();
-
-  // Test sb-mig import immediately on startup
-  console.log("=".repeat(50));
-  console.log("[STARTUP] Testing sb-mig import...");
-  const testResult = await testDynamicImport();
-  console.log(
-    "[STARTUP] Import test result:",
-    JSON.stringify(testResult, null, 2)
-  );
-  console.log("=".repeat(50));
-
-  // #region agent log (H4)
-  fetch("http://127.0.0.1:7245/ingest/2a8fc3d7-292a-4522-9c3c-c62f7e925b33", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sessionId: "debug-session",
-      runId: "run1",
-      hypothesisId: "H4",
-      location: "electron/main/index.ts:after-test",
-      message: "Interop test completed",
-      data: {
-        success: Boolean((testResult as Record<string, unknown>)?.success),
-        method: (testResult as Record<string, unknown>)?.method,
-        requireErrorPresent: Boolean((testResult as Record<string, unknown>)?.requireError),
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion agent log (H4)
 
   // Create window
   createWindow();
@@ -613,13 +553,4 @@ function registerIpcHandlers() {
       return await apiV2Sync.syncPlugins(client, { plugins, dryRun });
     }
   );
-
-  // ===== Test Handlers =====
-
-  ipcMain.handle("test:sbmigImport", async () => {
-    console.log("[main] Testing sb-mig import...");
-    const result = await testDynamicImport();
-    console.log("[main] Test result:", result);
-    return result;
-  });
 }

@@ -32,6 +32,10 @@ build/icons/
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
+
+# Cursor IDE
+.cursor/*
+!.cursor/rules/
 *.suo
 *.ntvs*
 *.njsproj
@@ -72,6 +76,10 @@ coverage/
 *.temp
 .cache/
 *.bak
+
+# sb-mig precompile cache
+.sb-mig-cache/
+.next/cache/sb-mig/
 
 # TypeScript
 *.tsbuildinfo

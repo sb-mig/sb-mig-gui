@@ -1,20 +1,34 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Button, Input, Modal, Spinner } from "./components/ui";
+import {
+  Badge,
+  Button,
+  Checkbox,
+  EmptyState,
+  FeatureCard,
+  InfoBox,
+  Input,
+  LoadingState,
+  Modal,
+  ModalFooter,
+  PanelHeader,
+  ProgressBar,
+  Spinner,
+  TitleBar,
+  ToggleGroup,
+  TreeChevron,
+} from "./components/ui";
+import { ButtonGroup, OutputLine, SpaceCard } from "./components/composed";
 import {
   SettingsScreen,
   StoryblokSpace,
 } from "./screens/Settings/SettingsScreen";
-
-/**
- * Output line from sb-mig command
- */
-interface OutputLine {
-  id: number;
-  type: "stdout" | "stderr" | "info" | "error" | "complete";
-  data: string;
-  timestamp: number;
-}
+import { useOutput } from "./hooks/useOutput";
+import {
+  toggleSetItem,
+  addToSet,
+  removeFromSet,
+} from "./lib/set-utils";
 
 /**
  * Resource type for picker
@@ -27,11 +41,19 @@ type ResourceType = "components" | "datasources" | "roles";
 type AppView = "main" | "settings";
 
 /**
+ * Execution mode - API uses sb-mig api-v2, CLI spawns sb-mig commands
+ */
+type ExecutionMode = "api" | "cli";
+
+/**
  * sb-mig GUI - Main Application
  */
 function App() {
   // View state
   const [currentView, setCurrentView] = useState<AppView>("main");
+
+  // Execution mode (api = direct api-v2, cli = spawn sb-mig commands)
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("api");
 
   // Configuration state
   const [oauthToken, setOauthToken] = useState("");
@@ -84,14 +106,22 @@ function App() {
   const [copyProgress, setCopyProgress] =
     useState<StoryblokCopyProgress | null>(null);
 
-  // Terminal output
-  const [output, setOutput] = useState<OutputLine[]>([]);
+  // Sync progress state
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<SyncProgressEvent | null>(
+    null
+  );
+
+  // Terminal output - using useOutput hook
+  const { output, addLine, clear: clearOutput } = useOutput();
   const [autoScroll, setAutoScroll] = useState(true);
   const outputRef = useRef<HTMLDivElement>(null);
-  const lineIdRef = useRef(0);
 
-  // Active space object and derived working directory
-  const activeSpace = spaces.find((s) => s.id === activeSpaceId) || null;
+  // Active space object and derived working directory (memoized)
+  const activeSpace = useMemo(
+    () => spaces.find((s) => s.id === activeSpaceId) || null,
+    [spaces, activeSpaceId]
+  );
   const workingDir = activeSpace?.workingDir || "";
 
   /**
@@ -128,6 +158,14 @@ function App() {
           }
         }
         if (savedActiveSpace) setActiveSpaceId(savedActiveSpace);
+
+        // Load execution mode preference
+        const savedExecutionMode = await window.sbmigGui.db.getSetting(
+          "sbmig_execution_mode"
+        );
+        if (savedExecutionMode === "api" || savedExecutionMode === "cli") {
+          setExecutionMode(savedExecutionMode);
+        }
       } catch (error) {
         // Failed to load config
       } finally {
@@ -143,13 +181,7 @@ function App() {
    */
   useEffect(() => {
     const unsubscribe = window.sbmigGui.sbmig.onOutput((event) => {
-      const line: OutputLine = {
-        id: lineIdRef.current++,
-        type: event.type,
-        data: event.data,
-        timestamp: event.timestamp,
-      };
-      setOutput((prev) => [...prev, line]);
+      addLine(event.type, event.data);
 
       if (event.type === "complete") {
         setIsRunning(false);
@@ -157,21 +189,26 @@ function App() {
     });
 
     return unsubscribe;
-  }, []);
+  }, [addLine]);
 
   /**
    * Auto-scroll to bottom when new output arrives
+   * Uses requestAnimationFrame to avoid layout thrashing
    */
   useEffect(() => {
     if (autoScroll && outputRef.current) {
-      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+      requestAnimationFrame(() => {
+        if (outputRef.current) {
+          outputRef.current.scrollTop = outputRef.current.scrollHeight;
+        }
+      });
     }
-  }, [output, autoScroll]);
+  }, [output.length, autoScroll]);
 
   /**
    * Run sb-mig debug command to validate configuration
    */
-  const handleValidate = async () => {
+  const handleValidate = useCallback(async () => {
     if (!workingDir) {
       setValidationResult({
         success: false,
@@ -198,7 +235,15 @@ function App() {
         message: result.error || "Validation failed",
       });
     }
-  };
+  }, [workingDir, oauthToken, activeSpace]);
+
+  /**
+   * Handle space selection from sidebar
+   */
+  const handleSpaceSelect = useCallback(async (spaceId: string) => {
+    setActiveSpaceId(spaceId);
+    await window.sbmigGui.db.setSetting("sbmig_active_space", spaceId);
+  }, []);
 
   /**
    * Execute an sb-mig command
@@ -206,28 +251,15 @@ function App() {
   const executeCommand = useCallback(
     async (command: string, args: string[]) => {
       if (!workingDir) {
-        setOutput((prev) => [
-          ...prev,
-          {
-            id: lineIdRef.current++,
-            type: "error",
-            data: "Please select a space first (Settings → Add Space)",
-            timestamp: Date.now(),
-          },
-        ]);
+        addLine("error", "Please select a space first (Settings → Add Space)");
         return;
       }
 
       if (isRunning) {
-        setOutput((prev) => [
-          ...prev,
-          {
-            id: lineIdRef.current++,
-            type: "error",
-            data: "A command is already running. Please wait or stop it first.",
-            timestamp: Date.now(),
-          },
-        ]);
+        addLine(
+          "error",
+          "A command is already running. Please wait or stop it first."
+        );
         return;
       }
 
@@ -238,7 +270,7 @@ function App() {
         accessToken: activeSpace?.accessToken,
       });
     },
-    [workingDir, oauthToken, activeSpace, isRunning]
+    [workingDir, oauthToken, activeSpace, isRunning, addLine]
   );
 
   /**
@@ -250,14 +282,6 @@ function App() {
   };
 
   /**
-   * Clear terminal output
-   */
-  const clearOutput = () => {
-    setOutput([]);
-    lineIdRef.current = 0;
-  };
-
-  /**
    * Open resource picker
    */
   const openResourcePicker = async (
@@ -265,15 +289,7 @@ function App() {
     action: "sync" | "backup"
   ) => {
     if (!workingDir) {
-      setOutput((prev) => [
-        ...prev,
-        {
-          id: lineIdRef.current++,
-          type: "error",
-          data: "Please select a space first",
-          timestamp: Date.now(),
-        },
-      ]);
+      addLine("error", "Please select a space first");
       return;
     }
 
@@ -286,17 +302,22 @@ function App() {
       let resources: SbmigDiscoveredComponent[] = [];
       switch (type) {
         case "components":
-          resources = await window.sbmigGui.sbmig.discoverComponents(
-            workingDir
-          );
+          resources =
+            executionMode === "api"
+              ? await window.sbmigGui.apiV2.discoverComponents(workingDir)
+              : await window.sbmigGui.sbmig.discoverComponents(workingDir);
           break;
         case "datasources":
-          resources = await window.sbmigGui.sbmig.discoverDatasources(
-            workingDir
-          );
+          resources =
+            executionMode === "api"
+              ? await window.sbmigGui.apiV2.discoverDatasources(workingDir)
+              : await window.sbmigGui.sbmig.discoverDatasources(workingDir);
           break;
         case "roles":
-          resources = await window.sbmigGui.sbmig.discoverRoles(workingDir);
+          resources =
+            executionMode === "api"
+              ? await window.sbmigGui.apiV2.discoverRoles(workingDir)
+              : await window.sbmigGui.sbmig.discoverRoles(workingDir);
           break;
       }
       setDiscoveredResources(resources);
@@ -308,131 +329,159 @@ function App() {
   };
 
   /**
+   * Filter tree to only include folders (pure function, no deps)
+   */
+  const filterFoldersOnly = useCallback(
+    (nodes: StoryblokTreeNode[]): StoryblokTreeNode[] => {
+      return nodes
+        .filter((node) => node.is_folder)
+        .map((node) => ({
+          ...node,
+          children: filterFoldersOnly(node.children),
+        }));
+    },
+    []
+  );
+
+  /**
    * Load stories from source space
    */
-  const loadSourceStories = async (spaceId: string) => {
-    const space = spaces.find((s) => s.id === spaceId);
-    if (!space || !oauthToken) return;
+  const loadSourceStories = useCallback(
+    async (spaceId: string) => {
+      const space = spaces.find((s) => s.id === spaceId);
+      if (!space || !oauthToken) return;
 
-    setIsLoadingStories(true);
-    setStoryTree([]);
-    setSelectedStoryIds(new Set());
-    setExpandedFolders(new Set());
+      setIsLoadingStories(true);
+      setStoryTree([]);
+      setSelectedStoryIds(new Set());
+      setExpandedFolders(new Set());
 
-    try {
-      const result = await window.sbmigGui.storyblok.fetchStories(
-        space.spaceId,
-        oauthToken
-      );
-      setStoryTree(result.tree);
-    } catch {
-      // Failed to load stories
-    } finally {
-      setIsLoadingStories(false);
-    }
-  };
+      try {
+        const result = await window.sbmigGui.apiV2.fetchStories(
+          space.spaceId,
+          oauthToken
+        );
+        setStoryTree(result.tree);
+      } catch {
+        // Failed to load stories
+      } finally {
+        setIsLoadingStories(false);
+      }
+    },
+    [spaces, oauthToken]
+  );
 
   /**
    * Load target space story tree for destination picker
    */
-  const loadTargetStories = async (spaceId: string) => {
-    const space = spaces.find((s) => s.id === spaceId);
-    if (!space || !oauthToken) return;
+  const loadTargetStories = useCallback(
+    async (spaceId: string) => {
+      const space = spaces.find((s) => s.id === spaceId);
+      if (!space || !oauthToken) return;
 
-    setIsLoadingTargetTree(true);
-    setTargetStoryTree([]);
+      setIsLoadingTargetTree(true);
+      setTargetStoryTree([]);
 
-    try {
-      const result = await window.sbmigGui.storyblok.fetchStories(
-        space.spaceId,
-        oauthToken
-      );
-      // Filter to only show folders
-      const foldersOnly = filterFoldersOnly(result.tree);
-      setTargetStoryTree(foldersOnly);
-    } catch {
-      // Failed to load target stories
-    } finally {
-      setIsLoadingTargetTree(false);
-    }
-  };
-
-  /**
-   * Filter tree to only include folders
-   */
-  const filterFoldersOnly = (
-    nodes: StoryblokTreeNode[]
-  ): StoryblokTreeNode[] => {
-    return nodes
-      .filter((node) => node.is_folder)
-      .map((node) => ({
-        ...node,
-        children: filterFoldersOnly(node.children),
-      }));
-  };
+      try {
+        const result = await window.sbmigGui.apiV2.fetchStories(
+          space.spaceId,
+          oauthToken
+        );
+        // Filter to only show folders
+        const foldersOnly = filterFoldersOnly(result.tree);
+        setTargetStoryTree(foldersOnly);
+      } catch {
+        // Failed to load target stories
+      } finally {
+        setIsLoadingTargetTree(false);
+      }
+    },
+    [spaces, oauthToken, filterFoldersOnly]
+  );
 
   /**
    * Toggle folder expansion
    */
-  const toggleFolderExpansion = (nodeId: number) => {
-    setExpandedFolders((prev) => {
-      const next = new Set(prev);
-      if (next.has(nodeId)) {
-        next.delete(nodeId);
-      } else {
-        next.add(nodeId);
+  const toggleFolderExpansion = useCallback((nodeId: number) => {
+    setExpandedFolders((prev) => toggleSetItem(prev, nodeId));
+  }, []);
+
+  /**
+   * Pre-compute all descendant IDs for each node (only recomputes when storyTree changes)
+   * This enables O(1) lookups instead of O(n) recursive traversal
+   */
+  const nodeIdMap = useMemo(() => {
+    const map = new Map<number, number[]>();
+
+    const computeIds = (node: StoryblokTreeNode): number[] => {
+      const ids = [node.id];
+      for (const child of node.children) {
+        ids.push(...computeIds(child));
       }
-      return next;
-    });
-  };
+      map.set(node.id, ids);
+      return ids;
+    };
+
+    storyTree.forEach(computeIds);
+    return map;
+  }, [storyTree]);
 
   /**
-   * Get all story IDs from a node
+   * Pre-compute selection status for each node (recomputes when nodeIdMap or selection changes)
+   * Returns 'full' | 'partial' | 'none' for each node ID
    */
-  const getAllStoryIds = (node: StoryblokTreeNode): number[] => {
-    const ids: number[] = [node.id];
-    for (const child of node.children) {
-      ids.push(...getAllStoryIds(child));
-    }
-    return ids;
-  };
+  const selectionStatus = useMemo(() => {
+    const status = new Map<number, "full" | "partial" | "none">();
 
-  /**
-   * Toggle story selection
-   */
-  const toggleStorySelection = (node: StoryblokTreeNode) => {
-    const allIds = getAllStoryIds(node);
-    setSelectedStoryIds((prev) => {
-      const next = new Set(prev);
-      const allSelected = allIds.every((id) => prev.has(id));
-
-      if (allSelected) {
-        allIds.forEach((id) => next.delete(id));
+    nodeIdMap.forEach((allIds, nodeId) => {
+      const selectedCount = allIds.filter((id) =>
+        selectedStoryIds.has(id)
+      ).length;
+      if (selectedCount === 0) {
+        status.set(nodeId, "none");
+      } else if (selectedCount === allIds.length) {
+        status.set(nodeId, "full");
       } else {
-        allIds.forEach((id) => next.add(id));
+        status.set(nodeId, "partial");
       }
-      return next;
     });
-  };
+
+    return status;
+  }, [nodeIdMap, selectedStoryIds]);
 
   /**
-   * Check if node is fully selected
+   * Toggle story selection using pre-computed nodeIdMap (O(1) lookup)
    */
-  const isNodeFullySelected = (node: StoryblokTreeNode): boolean => {
-    const allIds = getAllStoryIds(node);
-    return allIds.every((id) => selectedStoryIds.has(id));
-  };
+  const toggleStorySelection = useCallback(
+    (node: StoryblokTreeNode) => {
+      const allIds = nodeIdMap.get(node.id) || [node.id];
+      setSelectedStoryIds((prev) => {
+        const allSelected = allIds.every((id) => prev.has(id));
+        return allSelected ? removeFromSet(prev, allIds) : addToSet(prev, allIds);
+      });
+    },
+    [nodeIdMap]
+  );
 
   /**
-   * Check if node is partially selected
+   * Check if node is fully selected (O(1) lookup via selectionStatus)
    */
-  const isNodePartiallySelected = (node: StoryblokTreeNode): boolean => {
-    const allIds = getAllStoryIds(node);
-    const selectedCount = allIds.filter((id) =>
-      selectedStoryIds.has(id)
-    ).length;
-    return selectedCount > 0 && selectedCount < allIds.length;
-  };
+  const isNodeFullySelected = useCallback(
+    (node: StoryblokTreeNode): boolean => {
+      return selectionStatus.get(node.id) === "full";
+    },
+    [selectionStatus]
+  );
+
+  /**
+   * Check if node is partially selected (O(1) lookup via selectionStatus)
+   */
+  const isNodePartiallySelected = useCallback(
+    (node: StoryblokTreeNode): boolean => {
+      return selectionStatus.get(node.id) === "partial";
+    },
+    [selectionStatus]
+  );
 
   /**
    * Execute story copy
@@ -458,14 +507,14 @@ function App() {
       status: "pending",
     });
 
-    const unsubscribe = window.sbmigGui.storyblok.onCopyProgress((progress) => {
+    const unsubscribe = window.sbmigGui.apiV2.onCopyProgress((progress) => {
       setCopyProgress(progress);
     });
 
     try {
       let destinationParentId: number | null = null;
       if (destinationPath.trim()) {
-        const destStory = await window.sbmigGui.storyblok.getStoryBySlug(
+        const destStory = await window.sbmigGui.apiV2.getStoryBySlug(
           targetSpace.spaceId,
           destinationPath.trim(),
           oauthToken
@@ -475,7 +524,7 @@ function App() {
         }
       }
 
-      const result = await window.sbmigGui.storyblok.copyStories(
+      const result = await window.sbmigGui.apiV2.copyStories(
         sourceSpace.spaceId,
         targetSpace.spaceId,
         Array.from(selectedStoryIds),
@@ -483,17 +532,12 @@ function App() {
         oauthToken
       );
 
-      setOutput((prev) => [
-        ...prev,
-        {
-          id: lineIdRef.current++,
-          type: result.success ? "info" : "error",
-          data: `Copy complete: ${result.copiedCount} stories copied${
-            result.errors.length > 0 ? `, ${result.errors.length} errors` : ""
-          }`,
-          timestamp: Date.now(),
-        },
-      ]);
+      addLine(
+        result.success ? "info" : "error",
+        `Copy complete: ${result.copiedCount} stories copied${
+          result.errors.length > 0 ? `, ${result.errors.length} errors` : ""
+        }`
+      );
 
       if (result.success) {
         setShowStoryCopyModal(false);
@@ -511,7 +555,7 @@ function App() {
   /**
    * Reset story copy state
    */
-  const resetStoryCopyState = () => {
+  const resetStoryCopyState = useCallback(() => {
     setSourceSpaceId(null);
     setTargetSpaceId(null);
     setStoryTree([]);
@@ -521,33 +565,27 @@ function App() {
     setDestinationMode("browse");
     setTargetStoryTree([]);
     setCopyProgress(null);
-  };
+  }, []);
 
   /**
    * Toggle resource selection
    */
-  const toggleResourceSelection = (name: string) => {
-    setSelectedResources((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) {
-        next.delete(name);
-      } else {
-        next.add(name);
-      }
-      return next;
-    });
-  };
+  const toggleResourceSelection = useCallback((name: string) => {
+    setSelectedResources((prev) => toggleSetItem(prev, name));
+  }, []);
 
   /**
    * Select/deselect all resources
    */
-  const toggleAllResources = () => {
-    if (selectedResources.size === discoveredResources.length) {
-      setSelectedResources(new Set());
-    } else {
-      setSelectedResources(new Set(discoveredResources.map((r) => r.name)));
-    }
-  };
+  const toggleAllResources = useCallback(() => {
+    setSelectedResources((prev) => {
+      if (prev.size === discoveredResources.length) {
+        return new Set();
+      } else {
+        return new Set(discoveredResources.map((r) => r.name));
+      }
+    });
+  }, [discoveredResources]);
 
   /**
    * Execute with selected resources
@@ -556,8 +594,95 @@ function App() {
     if (!showResourcePicker || selectedResources.size === 0) return;
 
     const { type, action } = showResourcePicker;
-    const resourceNames = Array.from(selectedResources);
 
+    // API mode: use api-v2 for component sync
+    if (executionMode === "api" && action === "sync" && type === "components") {
+      // Get file paths for selected components
+      const filePaths = discoveredResources
+        .filter((r) => selectedResources.has(r.name))
+        .map((r) => r.filePath);
+
+      if (!activeSpace?.spaceId || !oauthToken) {
+        addLine("error", "Missing space ID or OAuth token. Check Settings.");
+        setShowResourcePicker(null);
+        return;
+      }
+
+      setShowResourcePicker(null);
+      setIsSyncing(true);
+      setSyncProgress({
+        type: "start",
+        current: 0,
+        total: filePaths.length,
+      });
+
+      // Show starting message
+      addLine("info", `[API v2] Syncing ${filePaths.length} components...`);
+
+      // Subscribe to progress events
+      const unsubscribe = window.sbmigGui.apiV2.onSyncProgress((progress) => {
+        setSyncProgress(progress);
+        // Also add progress to output for individual items
+        if (progress.type === "progress" && progress.name) {
+          const actionEmoji =
+            progress.action === "created"
+              ? "✅"
+              : progress.action === "updated"
+              ? "📝"
+              : progress.action === "error"
+              ? "❌"
+              : "";
+          if (
+            actionEmoji &&
+            ["created", "updated", "error"].includes(progress.action || "")
+          ) {
+            addLine(
+              progress.action === "error" ? "error" : "info",
+              `${actionEmoji} ${
+                progress.action === "created"
+                  ? "Created"
+                  : progress.action === "updated"
+                  ? "Updated"
+                  : "Error"
+              }: ${progress.name}`
+            );
+          }
+        }
+      });
+
+      try {
+        const result = await window.sbmigGui.apiV2.loadAndSyncComponents(
+          filePaths,
+          activeSpace.spaceId, // Use actual Storyblok space ID, not internal GUI ID
+          oauthToken,
+          workingDir,
+          { presets: false, ssot: false }
+        );
+
+        // Summary (individual items were logged via progress events)
+        const hasErrors = result.errors.length > 0;
+        addLine(
+          hasErrors ? "error" : "complete",
+          `[API v2] Sync complete: ${result.created.length} created, ${result.updated.length} updated, ${result.errors.length} errors`
+        );
+      } catch (error) {
+        addLine(
+          "error",
+          `[API v2] Sync failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      } finally {
+        unsubscribe(); // Always cleanup IPC listener
+        setIsSyncing(false);
+        setSyncProgress(null);
+      }
+
+      return;
+    }
+
+    // CLI mode: existing behavior
+    const resourceNames = Array.from(selectedResources);
     setShowResourcePicker(null);
     await executeCommand(action, [type, ...resourceNames]);
   };
@@ -575,12 +700,7 @@ function App() {
   if (currentView === "settings") {
     return (
       <div className="h-screen flex flex-col bg-background">
-        {/* Title Bar */}
-        <div className="h-10 bg-app-950 flex items-center justify-center border-b border-border draggable">
-          <span className="text-sm font-medium text-muted-foreground">
-            sb-mig GUI
-          </span>
-        </div>
+        <TitleBar />
         <SettingsScreen
           oauthToken={oauthToken}
           onOauthTokenChange={setOauthToken}
@@ -597,12 +717,7 @@ function App() {
   // Main view
   return (
     <div className="h-screen flex flex-col bg-background">
-      {/* Title Bar (macOS style) */}
-      <div className="h-10 bg-app-950 flex items-center justify-center border-b border-border draggable">
-        <span className="text-sm font-medium text-muted-foreground">
-          sb-mig GUI
-        </span>
-      </div>
+      <TitleBar />
 
       {/* Header */}
       <header className="flex-shrink-0 px-6 py-4 border-b border-border">
@@ -613,30 +728,40 @@ function App() {
                 <span className="text-2xl">📦</span> Storyblok Manager
               </h1>
               <p className="text-muted-foreground text-sm mt-1">
-                sb-mig v{sbmigVersion || "unknown"} • Manage your Storyblok
-                spaces
+                sb-mig v{sbmigVersion || "unknown"} •{" "}
+                {executionMode === "api" ? "Direct API mode" : "CLI mode"}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Execution Mode Toggle */}
+            <ToggleGroup
+              options={[
+                { value: "api", label: "API", icon: "⚡" },
+                { value: "cli", label: "CLI", icon: "💻" },
+              ]}
+              value={executionMode}
+              onChange={async (value) => {
+                setExecutionMode(value as ExecutionMode);
+                await window.sbmigGui.db.setSetting(
+                  "sbmig_execution_mode",
+                  value
+                );
+              }}
+            />
+
             {/* Status indicators */}
             {validationResult && (
-              <span
-                className={`px-3 py-1 rounded-lg text-sm ${
-                  validationResult.success
-                    ? "bg-storyblok-green/20 text-storyblok-green"
-                    : "bg-destructive/20 text-destructive"
-                }`}
-              >
+              <Badge variant={validationResult.success ? "success" : "error"}>
                 {validationResult.message}
-              </span>
+              </Badge>
             )}
             {isRunning && (
-              <span className="px-3 py-1 rounded-lg text-sm bg-yellow-500/20 text-yellow-400 flex items-center gap-2">
+              <Badge variant="warning">
                 <Spinner size="sm" />
                 Running...
-              </span>
+              </Badge>
             )}
 
             {/* Settings Button */}
@@ -654,18 +779,17 @@ function App() {
       {/* No space configured prompt */}
       {spaces.length === 0 && (
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <span className="text-6xl mb-4 block">🚀</span>
-            <h2 className="text-xl font-semibold mb-2">
-              Welcome to sb-mig GUI
-            </h2>
-            <p className="text-muted-foreground mb-4">
-              Get started by configuring your first Storyblok space
-            </p>
-            <Button onClick={() => setCurrentView("settings")}>
-              ⚙️ Open Settings
-            </Button>
-          </div>
+          <EmptyState
+            icon="🚀"
+            title="Welcome to sb-mig GUI"
+            message="Get started by configuring your first Storyblok space"
+            size="lg"
+            action={
+              <Button onClick={() => setCurrentView("settings")}>
+                ⚙️ Open Settings
+              </Button>
+            }
+          />
         </div>
       )}
 
@@ -690,34 +814,12 @@ function App() {
 
             <div className="space-y-2">
               {spaces.map((space) => (
-                <div
+                <SpaceCard
                   key={space.id}
-                  className={`p-3 rounded-lg border cursor-pointer transition-all ${
-                    activeSpaceId === space.id
-                      ? "bg-primary/10 border-primary/30 text-primary"
-                      : "bg-card border-border text-card-foreground hover:border-muted-foreground"
-                  }`}
-                  onClick={async () => {
-                    setActiveSpaceId(space.id);
-                    await window.sbmigGui.db.setSetting(
-                      "sbmig_active_space",
-                      space.id
-                    );
-                  }}
-                >
-                  <div className="font-medium text-sm">{space.name}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">
-                    ID: {space.spaceId}
-                  </div>
-                  {space.workingDir && (
-                    <div
-                      className="text-xs text-muted-foreground truncate mt-1"
-                      title={space.workingDir}
-                    >
-                      📁 {space.workingDir.split("/").slice(-2).join("/")}
-                    </div>
-                  )}
-                </div>
+                  space={space}
+                  isActive={activeSpaceId === space.id}
+                  onClick={() => handleSpaceSelect(space.id)}
+                />
               ))}
             </div>
 
@@ -733,170 +835,322 @@ function App() {
             </Button>
           </div>
 
-          {/* Right Panel: Operations & Output */}
+          {/* Right Panel: Mode-specific UI */}
           <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Operations Bar */}
-            <div className="flex-shrink-0 p-4 border-b border-border">
-              <div className="flex flex-wrap gap-2">
-                <div className="flex items-center gap-1 pr-3 border-r border-border">
-                  <span className="text-xs text-muted-foreground uppercase mr-2">
-                    Sync
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => openResourcePicker("components", "sync")}
-                    disabled={isRunning || !activeSpaceId}
-                  >
-                    Components
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => openResourcePicker("datasources", "sync")}
-                    disabled={isRunning || !activeSpaceId}
-                  >
-                    Datasources
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => openResourcePicker("roles", "sync")}
-                    disabled={isRunning || !activeSpaceId}
-                  >
-                    Roles
-                  </Button>
-                </div>
+            {executionMode === "cli" ? (
+              /* ========== CLI MODE UI ========== */
+              <>
+                {/* Operations Bar */}
+                <div className="flex-shrink-0 p-4 border-b border-border">
+                  <div className="flex flex-wrap gap-2">
+                    <ButtonGroup label="Sync">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => openResourcePicker("components", "sync")}
+                        disabled={isRunning || !activeSpaceId}
+                      >
+                        Components
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          openResourcePicker("datasources", "sync")
+                        }
+                        disabled={isRunning || !activeSpaceId}
+                      >
+                        Datasources
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => openResourcePicker("roles", "sync")}
+                        disabled={isRunning || !activeSpaceId}
+                      >
+                        Roles
+                      </Button>
+                    </ButtonGroup>
 
-                <div className="flex items-center gap-1 pr-3 border-r border-border">
-                  <span className="text-xs text-muted-foreground uppercase mr-2">
-                    Backup
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => openResourcePicker("components", "backup")}
-                    disabled={isRunning || !activeSpaceId}
-                  >
-                    Components
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() =>
-                      executeCommand("backup", ["stories", "--all"])
-                    }
-                    disabled={isRunning || !activeSpaceId}
-                  >
-                    Stories
-                  </Button>
-                </div>
+                    <ButtonGroup label="Backup">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          openResourcePicker("components", "backup")
+                        }
+                        disabled={isRunning || !activeSpaceId}
+                      >
+                        Components
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          executeCommand("backup", ["stories", "--all"])
+                        }
+                        disabled={isRunning || !activeSpaceId}
+                      >
+                        Stories
+                      </Button>
+                    </ButtonGroup>
 
-                <div className="flex items-center gap-1 pr-3 border-r border-border">
-                  <span className="text-xs text-muted-foreground uppercase mr-2">
-                    Copy
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => setShowStoryCopyModal(true)}
-                    disabled={isRunning || spaces.length < 1}
-                  >
-                    Stories
-                  </Button>
-                </div>
+                    <ButtonGroup label="Copy">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setShowStoryCopyModal(true)}
+                        disabled={isRunning || spaces.length < 1}
+                      >
+                        Stories
+                      </Button>
+                    </ButtonGroup>
 
-                <div className="flex items-center gap-1 pr-3 border-r border-border">
-                  <span className="text-xs text-muted-foreground uppercase mr-2">
-                    Other
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() =>
-                      executeCommand("discover", ["components", "--all"])
-                    }
-                    disabled={isRunning || !activeSpaceId}
-                  >
-                    Discover
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => executeCommand("debug", [])}
-                    disabled={isRunning || !activeSpaceId}
-                  >
-                    Debug
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={handleValidate}
-                    disabled={isRunning || !activeSpaceId}
-                  >
-                    Validate
-                  </Button>
-                </div>
+                    <ButtonGroup label="Other" showDivider={false}>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          executeCommand("discover", ["components", "--all"])
+                        }
+                        disabled={isRunning || !activeSpaceId}
+                      >
+                        Discover
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => executeCommand("debug", [])}
+                        disabled={isRunning || !activeSpaceId}
+                      >
+                        Debug
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={handleValidate}
+                        disabled={isRunning || !activeSpaceId}
+                      >
+                        Validate
+                      </Button>
+                    </ButtonGroup>
 
-                {isRunning && (
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={handleKillProcess}
-                  >
-                    ⏹️ Stop
-                  </Button>
-                )}
-              </div>
-            </div>
-
-            {/* Terminal Output */}
-            <div className="flex-1 flex flex-col overflow-hidden">
-              {/* Terminal Header */}
-              <div className="flex items-center justify-between px-4 py-2 bg-app-950 border-b border-border">
-                <span className="text-xs text-muted-foreground uppercase tracking-wider">
-                  Output
-                </span>
-                <div className="flex items-center gap-2">
-                  <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={autoScroll}
-                      onChange={(e) => setAutoScroll(e.target.checked)}
-                      className="rounded"
-                    />
-                    Auto-scroll
-                  </label>
-                  <Button variant="ghost" size="sm" onClick={clearOutput}>
-                    Clear
-                  </Button>
-                </div>
-              </div>
-
-              {/* Terminal Content */}
-              <div
-                ref={outputRef}
-                className="flex-1 overflow-y-auto p-4 bg-app-950 terminal-output"
-              >
-                {output.length === 0 ? (
-                  <div className="text-muted-foreground italic">
-                    No output yet. Select a space and run a command to see
-                    results here.
+                    {isRunning && (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={handleKillProcess}
+                      >
+                        ⏹️ Stop
+                      </Button>
+                    )}
                   </div>
-                ) : (
-                  output.map((line) => (
-                    <div
-                      key={line.id}
-                      className={`whitespace-pre-wrap ${getLineColor(
-                        line.type
-                      )}`}
+                </div>
+
+                {/* Terminal Output */}
+                <div className="flex-1 flex flex-col overflow-hidden">
+                  <PanelHeader
+                    title="Terminal Output"
+                    rightContent={
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={autoScroll}
+                            onChange={(e) => setAutoScroll(e.target.checked)}
+                            className="rounded"
+                          />
+                          Auto-scroll
+                        </label>
+                        <Button variant="ghost" size="sm" onClick={clearOutput}>
+                          Clear
+                        </Button>
+                      </div>
+                    }
+                  />
+
+                  {/* Terminal Content */}
+                  <div
+                    ref={outputRef}
+                    className="flex-1 overflow-y-auto p-4 bg-app-950 terminal-output font-mono text-sm"
+                  >
+                    {output.length === 0 ? (
+                      <EmptyState
+                        icon="📝"
+                        message="No output yet. Select a space and run a command to see results here."
+                        size="sm"
+                      />
+                    ) : (
+                      output.map((line) => (
+                        <OutputLine key={line.id} line={line} />
+                      ))
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : (
+              /* ========== API MODE UI ========== */
+              <div className="flex-1 overflow-y-auto p-6">
+                <div className="max-w-4xl mx-auto space-y-6">
+                  {/* API Mode Header */}
+                  <div className="text-center mb-8">
+                    <h2 className="text-2xl font-bold text-foreground mb-2">
+                      ⚡ Direct API Mode
+                    </h2>
+                    <p className="text-muted-foreground">
+                      Fast, structured operations using sb-mig API v2
+                    </p>
+                  </div>
+
+                  {/* Available Operations */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <FeatureCard
+                      icon="📋"
+                      iconBg="storyblok-green"
+                      title="Copy Stories"
+                      description="Copy stories between spaces with folder structure preserved"
                     >
-                      {line.data}
+                      <Button
+                        onClick={() => setShowStoryCopyModal(true)}
+                        disabled={spaces.length < 1}
+                        className="w-full"
+                      >
+                        Open Story Copy
+                      </Button>
+                    </FeatureCard>
+
+                    <FeatureCard
+                      icon="🔄"
+                      iconBg="storyblok-green"
+                      title="Sync Resources"
+                      description="Sync components, datasources, and roles to Storyblok"
+                    >
+                      <div className="flex gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() =>
+                            openResourcePicker("components", "sync")
+                          }
+                          disabled={!activeSpaceId}
+                        >
+                          Components
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() =>
+                            openResourcePicker("datasources", "sync")
+                          }
+                          disabled={!activeSpaceId}
+                        >
+                          Datasources
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => openResourcePicker("roles", "sync")}
+                          disabled={!activeSpaceId}
+                        >
+                          Roles
+                        </Button>
+                      </div>
+                    </FeatureCard>
+
+                    <FeatureCard
+                      icon="💾"
+                      iconBg="muted"
+                      title="Backup Resources"
+                      description="Backup via API v2 coming soon"
+                      disabled
+                    >
+                      <p className="text-xs text-muted-foreground">
+                        Switch to CLI mode for backup functionality
+                      </p>
+                    </FeatureCard>
+                  </div>
+
+                  {/* Copy Progress */}
+                  {copyProgress && (
+                    <ProgressBar
+                      current={copyProgress.current}
+                      total={copyProgress.total}
+                      title="Copy Progress"
+                      status={
+                        copyProgress.status === "done"
+                          ? "✅ Complete"
+                          : copyProgress.status === "error"
+                          ? "❌ Error"
+                          : `⏳ ${copyProgress.currentStory}`
+                      }
+                      showCard
+                    />
+                  )}
+
+                  {/* Sync Progress Bar */}
+                  {isSyncing && syncProgress && (
+                    <ProgressBar
+                      current={syncProgress.current ?? 0}
+                      total={syncProgress.total ?? 0}
+                      title="Sync Progress"
+                      status={
+                        syncProgress.type === "start"
+                          ? "Starting sync..."
+                          : syncProgress.type === "progress"
+                          ? `${
+                              syncProgress.action === "creating"
+                                ? "Creating"
+                                : syncProgress.action === "updating"
+                                ? "Updating"
+                                : syncProgress.action === "created"
+                                ? "✓ Created"
+                                : syncProgress.action === "updated"
+                                ? "✓ Updated"
+                                : syncProgress.action === "error"
+                                ? "✗ Error"
+                                : ""
+                            }: ${syncProgress.name || ""}`
+                          : syncProgress.type === "complete"
+                          ? "Complete!"
+                          : "Syncing..."
+                      }
+                      showCard
+                    />
+                  )}
+
+                  {/* API Mode Output Log */}
+                  {output.length > 0 && (
+                    <div className="bg-card border border-border rounded-xl overflow-hidden">
+                      <PanelHeader
+                        title="Sync Log"
+                        rightContent={
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={clearOutput}
+                            className="text-xs"
+                          >
+                            Clear
+                          </Button>
+                        }
+                      />
+                      <div className="p-4 max-h-48 overflow-y-auto font-mono text-xs space-y-1">
+                        {output.map((line) => (
+                          <OutputLine key={line.id} line={line} />
+                        ))}
+                      </div>
                     </div>
-                  ))
-                )}
+                  )}
+
+                  {/* Info Box */}
+                  <InfoBox variant="tip">
+                    API mode provides faster operations with structured
+                    responses. Sync is fully supported. For backup and debug,
+                    switch to CLI mode using the toggle in the header.
+                  </InfoBox>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       )}
@@ -980,19 +1234,21 @@ function App() {
                 </div>
                 <div className="h-[400px] overflow-y-auto">
                   {isLoadingStories ? (
-                    <div className="flex items-center justify-center h-full">
-                      <Spinner size="lg" />
-                      <span className="ml-3 text-muted-foreground">
-                        Loading stories...
-                      </span>
-                    </div>
+                    <LoadingState
+                      message="Loading stories..."
+                      className="h-full"
+                    />
                   ) : !sourceSpaceId ? (
                     <div className="flex items-center justify-center h-full text-muted-foreground">
                       Select a source space to load stories
                     </div>
                   ) : storyTree.length === 0 ? (
-                    <div className="flex items-center justify-center h-full text-muted-foreground">
-                      No stories found
+                    <div className="flex items-center justify-center h-full">
+                      <EmptyState
+                        icon="📭"
+                        message="No stories found"
+                        size="sm"
+                      />
                     </div>
                   ) : (
                     <VirtualStoryTree
@@ -1070,9 +1326,7 @@ function App() {
                           Select a target space first
                         </div>
                       ) : isLoadingTargetTree ? (
-                        <div className="flex items-center justify-center h-full">
-                          <Spinner size="lg" />
-                        </div>
+                        <LoadingState className="h-full" />
                       ) : (
                         <DestinationFolderPicker
                           nodes={targetStoryTree}
@@ -1115,35 +1369,29 @@ function App() {
             )}
           </div>
 
-          <div className="flex gap-3 pt-4 border-t border-border mt-4">
-            <div className="flex-1 text-sm text-muted-foreground">
-              {selectedStoryIds.size > 0 && (
-                <span>
+          <ModalFooter
+            leftContent={
+              selectedStoryIds.size > 0 && (
+                <span className="text-sm text-muted-foreground">
                   {selectedStoryIds.size}{" "}
                   {selectedStoryIds.size === 1 ? "story" : "stories"} selected
                 </span>
-              )}
-            </div>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setShowStoryCopyModal(false);
-                resetStoryCopyState();
-              }}
-              disabled={isCopying}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={executeStoryCopy}
-              disabled={
-                selectedStoryIds.size === 0 ||
-                !sourceSpaceId ||
-                !targetSpaceId ||
-                isCopying
-              }
-            >
-              {isCopying ? (
+              )
+            }
+            onCancel={() => {
+              setShowStoryCopyModal(false);
+              resetStoryCopyState();
+            }}
+            cancelDisabled={isCopying}
+            onSubmit={executeStoryCopy}
+            submitDisabled={
+              selectedStoryIds.size === 0 ||
+              !sourceSpaceId ||
+              !targetSpaceId ||
+              isCopying
+            }
+            submitContent={
+              isCopying ? (
                 <>
                   <Spinner size="sm" className="mr-2" />
                   Copying...
@@ -1152,9 +1400,9 @@ function App() {
                 `Copy ${
                   selectedStoryIds.size > 0 ? `(${selectedStoryIds.size})` : ""
                 }`
-              )}
-            </Button>
-          </div>
+              )
+            }
+          />
         </Modal>
       )}
 
@@ -1168,19 +1416,15 @@ function App() {
         >
           <div className="space-y-4">
             {isDiscovering ? (
-              <div className="flex items-center justify-center py-8">
-                <Spinner size="lg" />
-                <span className="ml-3 text-muted-foreground">
-                  Discovering {showResourcePicker.type}...
-                </span>
-              </div>
+              <LoadingState
+                message={`Discovering ${showResourcePicker.type}...`}
+                className="py-8"
+              />
             ) : discoveredResources.length === 0 ? (
-              <div className="text-center py-8">
-                <span className="text-4xl mb-4 block">📭</span>
-                <p className="text-muted-foreground">
-                  No {showResourcePicker.type} found in the working directory.
-                </p>
-              </div>
+              <EmptyState
+                icon="📭"
+                message={`No ${showResourcePicker.type} found in the working directory.`}
+              />
             ) : (
               <>
                 <div className="flex items-center justify-between pb-3 border-b border-border">
@@ -1188,12 +1432,14 @@ function App() {
                     onClick={toggleAllResources}
                     className="flex items-center gap-2 text-sm hover:text-foreground transition-colors"
                   >
-                    <div
-                      className={`w-4 h-4 rounded border transition-colors ${
+                    <Checkbox
+                      checked={
                         selectedResources.size === discoveredResources.length
-                          ? "bg-primary border-primary"
-                          : "border-muted-foreground"
-                      }`}
+                      }
+                      partial={
+                        selectedResources.size > 0 &&
+                        selectedResources.size < discoveredResources.length
+                      }
                     />
                     Select All
                   </button>
@@ -1213,45 +1459,25 @@ function App() {
             )}
           </div>
 
-          <div className="flex gap-3 pt-4 border-t border-border mt-4">
-            <div className="flex-1" />
-            <Button variant="ghost" onClick={() => setShowResourcePicker(null)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={executeWithSelectedResources}
-              disabled={selectedResources.size === 0 || isDiscovering}
-            >
-              {showResourcePicker.action === "sync" ? "🔄" : "💾"}{" "}
-              {showResourcePicker.action.charAt(0).toUpperCase() +
-                showResourcePicker.action.slice(1)}{" "}
-              {selectedResources.size > 0 ? `(${selectedResources.size})` : ""}
-            </Button>
-          </div>
+          <ModalFooter
+            onCancel={() => setShowResourcePicker(null)}
+            onSubmit={executeWithSelectedResources}
+            submitDisabled={selectedResources.size === 0 || isDiscovering}
+            submitContent={
+              <>
+                {showResourcePicker.action === "sync" ? "🔄" : "💾"}{" "}
+                {showResourcePicker.action.charAt(0).toUpperCase() +
+                  showResourcePicker.action.slice(1)}{" "}
+                {selectedResources.size > 0
+                  ? `(${selectedResources.size})`
+                  : ""}
+              </>
+            }
+          />
         </Modal>
       )}
     </div>
   );
-}
-
-/**
- * Get color class for output line type
- */
-function getLineColor(type: OutputLine["type"]): string {
-  switch (type) {
-    case "stdout":
-      return "text-foreground";
-    case "stderr":
-      return "text-yellow-400";
-    case "info":
-      return "text-blue-400";
-    case "error":
-      return "text-red-400";
-    case "complete":
-      return "text-storyblok-green";
-    default:
-      return "text-muted-foreground";
-  }
 }
 
 /**
@@ -1292,7 +1518,7 @@ function VirtualResourceList({
 
           return (
             <div
-              key={resource.name}
+              key={resource.filePath}
               style={{
                 position: "absolute",
                 top: 0,
@@ -1306,13 +1532,7 @@ function VirtualResourceList({
                 onClick={() => onToggleSelection(resource.name)}
                 className="w-full flex items-center gap-3 p-2 hover:bg-muted rounded transition-colors"
               >
-                <div
-                  className={`w-4 h-4 rounded border transition-colors flex-shrink-0 ${
-                    isSelected
-                      ? "bg-primary border-primary"
-                      : "border-muted-foreground"
-                  }`}
-                />
+                <Checkbox checked={isSelected} />
                 <div className="flex-1 text-left min-w-0">
                   <div className="font-medium text-sm truncate">
                     {resource.name}
@@ -1348,23 +1568,25 @@ function VirtualStoryTree({
   isNodeFullySelected: (node: StoryblokTreeNode) => boolean;
   isNodePartiallySelected: (node: StoryblokTreeNode) => boolean;
 }) {
-  // Flatten the tree for virtualization
-  const flattenTree = (
-    nodes: StoryblokTreeNode[],
-    depth: number = 0
-  ): { node: StoryblokTreeNode; depth: number }[] => {
-    const result: { node: StoryblokTreeNode; depth: number }[] = [];
-    for (const node of nodes) {
-      result.push({ node, depth });
-      if (node.is_folder && expandedIds.has(node.id)) {
-        result.push(...flattenTree(node.children, depth + 1));
-      }
-    }
-    return result;
-  };
-
-  const flatNodes = flattenTree(nodes);
   const parentRef = useRef<HTMLDivElement>(null);
+
+  // Memoize flattened tree - only recompute when nodes or expandedIds change
+  const flatNodes = useMemo(() => {
+    const flatten = (
+      treeNodes: StoryblokTreeNode[],
+      depth: number = 0
+    ): { node: StoryblokTreeNode; depth: number }[] => {
+      const result: { node: StoryblokTreeNode; depth: number }[] = [];
+      for (const node of treeNodes) {
+        result.push({ node, depth });
+        if (node.is_folder && expandedIds.has(node.id)) {
+          result.push(...flatten(node.children, depth + 1));
+        }
+      }
+      return result;
+    };
+    return flatten(nodes);
+  }, [nodes, expandedIds]);
 
   const virtualizer = useVirtualizer({
     count: flatNodes.length,
@@ -1405,24 +1627,17 @@ function VirtualStoryTree({
                 style={{ paddingLeft: `${depth * 20 + 8}px` }}
               >
                 {node.is_folder && (
-                  <button
+                  <TreeChevron
+                    expanded={isExpanded}
                     onClick={() => onToggleExpand(node.id)}
-                    className="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-foreground"
-                  >
-                    {isExpanded ? "▼" : "▶"}
-                  </button>
+                  />
                 )}
                 {!node.is_folder && <div className="w-5" />}
 
-                <button
-                  onClick={() => onToggleSelect(node)}
-                  className={`w-4 h-4 rounded border transition-colors flex-shrink-0 ${
-                    isSelected
-                      ? "bg-primary border-primary"
-                      : isPartial
-                      ? "bg-primary/50 border-primary"
-                      : "border-muted-foreground"
-                  }`}
+                <Checkbox
+                  checked={isSelected}
+                  partial={isPartial}
+                  onChange={() => onToggleSelect(node)}
                 />
 
                 <span className="text-sm truncate flex-1">
@@ -1452,15 +1667,7 @@ function DestinationFolderPicker({
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
 
   const toggleExpand = (id: number) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
+    setExpandedIds((prev) => toggleSetItem(prev, id));
   };
 
   const renderNode = (
@@ -1480,15 +1687,13 @@ function DestinationFolderPicker({
           onClick={() => onSelect(node.full_slug)}
         >
           {node.children.length > 0 && (
-            <button
+            <TreeChevron
+              expanded={isExpanded}
               onClick={(e) => {
                 e.stopPropagation();
                 toggleExpand(node.id);
               }}
-              className="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-foreground"
-            >
-              {isExpanded ? "▼" : "▶"}
-            </button>
+            />
           )}
           {node.children.length === 0 && <div className="w-5" />}
 

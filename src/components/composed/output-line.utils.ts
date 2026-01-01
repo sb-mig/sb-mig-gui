@@ -1,4 +1,9 @@
-export type OutputLineType = "stdout" | "stderr" | "info" | "error" | "complete";
+export type OutputLineType =
+  | "stdout"
+  | "stderr"
+  | "info"
+  | "error"
+  | "complete";
 
 export interface OutputLineData {
   id: number;
@@ -26,4 +31,3 @@ export function getLineColor(type: OutputLineType): string {
       return "text-muted-foreground";
   }
 }
-

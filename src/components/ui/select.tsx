@@ -17,6 +17,7 @@ export interface SelectProps
 /**
  * Select dropdown component with consistent styling
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
   ({ options, placeholder, className, ...props }, ref) => {
     return (

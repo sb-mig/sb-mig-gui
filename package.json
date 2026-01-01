@@ -1,6 +1,6 @@
 {
   "name": "sb-mig-gui",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "sb-mig GUI - Visual interface for Storyblok CMS management",
   "author": {
     "name": "Marcin Krawczyk",

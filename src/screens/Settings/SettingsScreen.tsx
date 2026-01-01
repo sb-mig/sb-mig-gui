@@ -19,6 +19,8 @@ interface SettingsScreenProps {
   onSpacesChange: (spaces: StoryblokSpace[]) => void
   activeSpaceId: string | null
   onActiveSpaceChange: (spaceId: string | null) => void
+  debugMode: boolean
+  onDebugModeChange: (enabled: boolean) => void
   onBack: () => void
 }
 
@@ -32,12 +34,23 @@ export function SettingsScreen({
   onSpacesChange,
   activeSpaceId,
   onActiveSpaceChange,
+  debugMode,
+  onDebugModeChange,
   onBack,
 }: SettingsScreenProps) {
   const [showOAuthToken, setShowOAuthToken] = useState(false)
   const [showAddSpace, setShowAddSpace] = useState(false)
   const [editingSpace, setEditingSpace] = useState<StoryblokSpace | null>(null)
   const [tokenSaved, setTokenSaved] = useState(false)
+
+  /**
+   * Toggle debug mode
+   */
+  const handleToggleDebugMode = async () => {
+    const newValue = !debugMode
+    onDebugModeChange(newValue)
+    await window.sbmigGui.db.setSetting('sbmig_debug_mode', newValue ? 'true' : 'false')
+  }
 
   /**
    * Save OAuth token with feedback
@@ -252,6 +265,44 @@ export function SettingsScreen({
             )}
           </section>
 
+          {/* Advanced Settings Section */}
+          <section className="bg-card rounded-xl border border-border p-6">
+            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <span>🔧</span> Advanced Settings
+            </h2>
+            
+            {/* Debug Mode Toggle */}
+            <div className="flex items-center justify-between py-3 border-b border-border">
+              <div className="flex-1">
+                <div className="font-medium">Debug Mode</div>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  Show detailed logs, file paths, and timing information during operations
+                </p>
+              </div>
+              <button
+                onClick={handleToggleDebugMode}
+                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${
+                  debugMode ? 'bg-primary' : 'bg-muted'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    debugMode ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {debugMode && (
+              <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                <p className="text-sm text-amber-400 flex items-center gap-2">
+                  <span>⚠️</span>
+                  Debug mode is enabled. More detailed information will be shown in the sync log.
+                </p>
+              </div>
+            )}
+          </section>
+
           {/* Info Section */}
           <InfoBox variant="tip" title="Tips">
             <ul className="text-sm space-y-1 list-none p-0 m-0">
@@ -259,6 +310,7 @@ export function SettingsScreen({
               <li>• Each space needs its own Access Token (preview or public token)</li>
               <li>• The working directory should contain your project's <code className="px-1 bg-muted rounded">storyblok.config.js</code></li>
               <li>• You can quickly switch between spaces from the main view</li>
+              <li>• Enable Debug Mode to see detailed logs and troubleshoot issues</li>
             </ul>
           </InfoBox>
         </div>

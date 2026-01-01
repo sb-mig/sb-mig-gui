@@ -158,4 +158,3 @@ export const ProgressCard = memo(function ProgressCard({
 });
 
 export default ProgressBar;
-

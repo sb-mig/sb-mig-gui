@@ -12,7 +12,60 @@ permissions:
   contents: write
 
 jobs:
+  notify-start:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Notify Vanaheim (started)
+        env:
+          VANAHEIM_NOTIFY_URL: ${{ secrets.VANAHEIM_NOTIFY_URL }}
+          VANAHEIM_NOTIFY_SECRET: ${{ secrets.VANAHEIM_NOTIFY_SECRET }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -z "$VANAHEIM_NOTIFY_URL" ] || [ -z "$VANAHEIM_NOTIFY_SECRET" ]; then
+            echo "Vanaheim notify not configured, skipping."
+            exit 0
+          fi
+
+          SHA=$(git rev-parse HEAD)
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION=$(node -p "require('./package.json').version")
+          fi
+
+          payload=$(cat <<EOF
+          {
+            "type": "build",
+            "title": "🔨 sb-mig GUI release started",
+            "body": "${GITHUB_REPOSITORY} • v${VERSION} • macOS/Windows/Linux",
+            "data": {
+              "source": "github_actions",
+              "event": "desktop_release_started",
+              "status": "running",
+              "repository": "${GITHUB_REPOSITORY}",
+              "workflow": "${GITHUB_WORKFLOW}",
+              "branch": "${GITHUB_REF_NAME}",
+              "commit": "${SHA}",
+              "run_url": "${RUN_URL}",
+              "version": "${VERSION}",
+              "platforms": "macOS, Windows, Linux"
+            }
+          }
+          EOF
+          )
+
+          curl -X POST "$VANAHEIM_NOTIFY_URL" \
+            -H "X-Notify-Secret: $VANAHEIM_NOTIFY_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "$payload"
+
   build-macos:
+    needs: notify-start
     runs-on: macos-latest
 
     steps:
@@ -24,7 +77,6 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-
       - name: Install dependencies
         run: npm ci
 
@@ -73,7 +125,7 @@ jobs:
           echo "=== Available Signing Identities ==="
           security find-identity -v -p codesigning
         env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}Ś
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
 
@@ -103,6 +155,7 @@ jobs:
           if-no-files-found: error
 
   build-windows:
+    needs: notify-start
     runs-on: windows-latest
 
     steps:
@@ -136,6 +189,7 @@ jobs:
           if-no-files-found: error
 
   build-linux:
+    needs: notify-start
     runs-on: ubuntu-latest
 
     steps:
@@ -220,3 +274,63 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify Vanaheim (completed)
+        if: always()
+        env:
+          VANAHEIM_NOTIFY_URL: ${{ secrets.VANAHEIM_NOTIFY_URL }}
+          VANAHEIM_NOTIFY_SECRET: ${{ secrets.VANAHEIM_NOTIFY_SECRET }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if [ -z "$VANAHEIM_NOTIFY_URL" ] || [ -z "$VANAHEIM_NOTIFY_SECRET" ]; then
+            echo "Vanaheim notify not configured, skipping."
+            exit 0
+          fi
+
+          STATUS="${{ job.status }}"
+          SHA=$(git rev-parse HEAD)
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          RELEASE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
+
+          case "$STATUS" in
+            success)
+              TITLE="✅ sb-mig GUI release completed"
+              EVENT="desktop_release_success"
+              ;;
+            cancelled)
+              TITLE="⚠️ sb-mig GUI release cancelled"
+              EVENT="desktop_release_cancelled"
+              ;;
+            *)
+              TITLE="❌ sb-mig GUI release failed"
+              EVENT="desktop_release_failed"
+              ;;
+          esac
+
+          payload=$(cat <<EOF
+          {
+            "type": "build",
+            "title": "${TITLE}",
+            "body": "${GITHUB_REPOSITORY} • v${RELEASE_VERSION} • macOS/Windows/Linux",
+            "data": {
+              "source": "github_actions",
+              "event": "${EVENT}",
+              "status": "${STATUS}",
+              "repository": "${GITHUB_REPOSITORY}",
+              "workflow": "${GITHUB_WORKFLOW}",
+              "branch": "${GITHUB_REF_NAME}",
+              "commit": "${SHA}",
+              "run_url": "${RUN_URL}",
+              "release_url": "${RELEASE_URL}",
+              "version": "${RELEASE_VERSION}",
+              "platforms": "macOS, Windows, Linux"
+            }
+          }
+          EOF
+          )
+
+          curl -X POST "$VANAHEIM_NOTIFY_URL" \
+            -H "X-Notify-Secret: $VANAHEIM_NOTIFY_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "$payload"

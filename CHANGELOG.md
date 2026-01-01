@@ -1,5 +1,11 @@
 # sb-mig-gui
 
+## 1.3.1
+
+### Patch Changes
+
+- 6f534aa: update sb-mig dep
+
 ## 1.3.0
 
 ### Minor Changes

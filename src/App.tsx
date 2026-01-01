@@ -1,20 +1,30 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Button, Input, Modal, Spinner } from "./components/ui";
+import {
+  Badge,
+  Button,
+  Checkbox,
+  EmptyState,
+  FeatureCard,
+  InfoBox,
+  Input,
+  LoadingState,
+  Modal,
+  ModalFooter,
+  PanelHeader,
+  ProgressBar,
+  Spinner,
+  TitleBar,
+  ToggleGroup,
+  TreeChevron,
+} from "./components/ui";
+import { ButtonGroup, OutputLine, SpaceCard } from "./components/composed";
 import {
   SettingsScreen,
   StoryblokSpace,
 } from "./screens/Settings/SettingsScreen";
-
-/**
- * Output line from sb-mig command
- */
-interface OutputLine {
-  id: number;
-  type: "stdout" | "stderr" | "info" | "error" | "complete";
-  data: string;
-  timestamp: number;
-}
+import { useOutput } from "./hooks/useOutput";
+import { toggleSetItem, addToSet, removeFromSet, hasAllItems } from "./lib/set-utils";
 
 /**
  * Resource type for picker
@@ -92,11 +102,16 @@ function App() {
   const [copyProgress, setCopyProgress] =
     useState<StoryblokCopyProgress | null>(null);
 
-  // Terminal output
-  const [output, setOutput] = useState<OutputLine[]>([]);
+  // Sync progress state
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<SyncProgressEvent | null>(
+    null
+  );
+
+  // Terminal output - using useOutput hook
+  const { output, addLine, clear: clearOutput } = useOutput();
   const [autoScroll, setAutoScroll] = useState(true);
   const outputRef = useRef<HTMLDivElement>(null);
-  const lineIdRef = useRef(0);
 
   // Active space object and derived working directory
   const activeSpace = spaces.find((s) => s.id === activeSpaceId) || null;
@@ -159,13 +174,7 @@ function App() {
    */
   useEffect(() => {
     const unsubscribe = window.sbmigGui.sbmig.onOutput((event) => {
-      const line: OutputLine = {
-        id: lineIdRef.current++,
-        type: event.type,
-        data: event.data,
-        timestamp: event.timestamp,
-      };
-      setOutput((prev) => [...prev, line]);
+      addLine(event.type, event.data);
 
       if (event.type === "complete") {
         setIsRunning(false);
@@ -173,7 +182,7 @@ function App() {
     });
 
     return unsubscribe;
-  }, []);
+  }, [addLine]);
 
   /**
    * Auto-scroll to bottom when new output arrives
@@ -222,28 +231,12 @@ function App() {
   const executeCommand = useCallback(
     async (command: string, args: string[]) => {
       if (!workingDir) {
-        setOutput((prev) => [
-          ...prev,
-          {
-            id: lineIdRef.current++,
-            type: "error",
-            data: "Please select a space first (Settings → Add Space)",
-            timestamp: Date.now(),
-          },
-        ]);
+        addLine("error", "Please select a space first (Settings → Add Space)");
         return;
       }
 
       if (isRunning) {
-        setOutput((prev) => [
-          ...prev,
-          {
-            id: lineIdRef.current++,
-            type: "error",
-            data: "A command is already running. Please wait or stop it first.",
-            timestamp: Date.now(),
-          },
-        ]);
+        addLine("error", "A command is already running. Please wait or stop it first.");
         return;
       }
 
@@ -254,7 +247,7 @@ function App() {
         accessToken: activeSpace?.accessToken,
       });
     },
-    [workingDir, oauthToken, activeSpace, isRunning]
+    [workingDir, oauthToken, activeSpace, isRunning, addLine]
   );
 
   /**
@@ -265,13 +258,6 @@ function App() {
     setIsRunning(false);
   };
 
-  /**
-   * Clear terminal output
-   */
-  const clearOutput = () => {
-    setOutput([]);
-    lineIdRef.current = 0;
-  };
 
   /**
    * Open resource picker
@@ -281,15 +267,7 @@ function App() {
     action: "sync" | "backup"
   ) => {
     if (!workingDir) {
-      setOutput((prev) => [
-        ...prev,
-        {
-          id: lineIdRef.current++,
-          type: "error",
-          data: "Please select a space first",
-          timestamp: Date.now(),
-        },
-      ]);
+      addLine("error", "Please select a space first");
       return;
     }
 
@@ -396,15 +374,7 @@ function App() {
    * Toggle folder expansion
    */
   const toggleFolderExpansion = (nodeId: number) => {
-    setExpandedFolders((prev) => {
-      const next = new Set(prev);
-      if (next.has(nodeId)) {
-        next.delete(nodeId);
-      } else {
-        next.add(nodeId);
-      }
-      return next;
-    });
+    setExpandedFolders((prev) => toggleSetItem(prev, nodeId));
   };
 
   /**
@@ -424,15 +394,8 @@ function App() {
   const toggleStorySelection = (node: StoryblokTreeNode) => {
     const allIds = getAllStoryIds(node);
     setSelectedStoryIds((prev) => {
-      const next = new Set(prev);
-      const allSelected = allIds.every((id) => prev.has(id));
-
-      if (allSelected) {
-        allIds.forEach((id) => next.delete(id));
-      } else {
-        allIds.forEach((id) => next.add(id));
-      }
-      return next;
+      const allSelected = hasAllItems(prev, allIds);
+      return allSelected ? removeFromSet(prev, allIds) : addToSet(prev, allIds);
     });
   };
 
@@ -504,17 +467,12 @@ function App() {
         oauthToken
       );
 
-      setOutput((prev) => [
-        ...prev,
-        {
-          id: lineIdRef.current++,
-          type: result.success ? "info" : "error",
-          data: `Copy complete: ${result.copiedCount} stories copied${
-            result.errors.length > 0 ? `, ${result.errors.length} errors` : ""
-          }`,
-          timestamp: Date.now(),
-        },
-      ]);
+      addLine(
+        result.success ? "info" : "error",
+        `Copy complete: ${result.copiedCount} stories copied${
+          result.errors.length > 0 ? `, ${result.errors.length} errors` : ""
+        }`
+      );
 
       if (result.success) {
         setShowStoryCopyModal(false);
@@ -548,15 +506,7 @@ function App() {
    * Toggle resource selection
    */
   const toggleResourceSelection = (name: string) => {
-    setSelectedResources((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) {
-        next.delete(name);
-      } else {
-        next.add(name);
-      }
-      return next;
-    });
+    setSelectedResources((prev) => toggleSetItem(prev, name));
   };
 
   /**
@@ -577,8 +527,87 @@ function App() {
     if (!showResourcePicker || selectedResources.size === 0) return;
 
     const { type, action } = showResourcePicker;
-    const resourceNames = Array.from(selectedResources);
 
+    // API mode: use api-v2 for component sync
+    if (executionMode === "api" && action === "sync" && type === "components") {
+      // Get file paths for selected components
+      const filePaths = discoveredResources
+        .filter((r) => selectedResources.has(r.name))
+        .map((r) => r.filePath);
+
+      if (!activeSpace?.spaceId || !oauthToken) {
+        addLine("error", "Missing space ID or OAuth token. Check Settings.");
+        setShowResourcePicker(null);
+        return;
+      }
+
+      setShowResourcePicker(null);
+      setIsSyncing(true);
+      setSyncProgress({
+        type: "start",
+        current: 0,
+        total: filePaths.length,
+      });
+
+      // Show starting message
+      addLine("info", `[API v2] Syncing ${filePaths.length} components...`);
+
+      // Subscribe to progress events
+      const unsubscribe = window.sbmigGui.apiV2.onSyncProgress((progress) => {
+        setSyncProgress(progress);
+        // Also add progress to output for individual items
+        if (progress.type === "progress" && progress.name) {
+          const actionEmoji =
+            progress.action === "created"
+              ? "✅"
+              : progress.action === "updated"
+                ? "📝"
+                : progress.action === "error"
+                  ? "❌"
+                  : "";
+          if (
+            actionEmoji &&
+            ["created", "updated", "error"].includes(progress.action || "")
+          ) {
+            addLine(
+              progress.action === "error" ? "error" : "info",
+              `${actionEmoji} ${progress.action === "created" ? "Created" : progress.action === "updated" ? "Updated" : "Error"}: ${progress.name}`
+            );
+          }
+        }
+      });
+
+      try {
+        const result = await window.sbmigGui.apiV2.loadAndSyncComponents(
+          filePaths,
+          activeSpace.spaceId, // Use actual Storyblok space ID, not internal GUI ID
+          oauthToken,
+          workingDir,
+          { presets: false, ssot: false }
+        );
+
+        // Summary (individual items were logged via progress events)
+        const hasErrors = result.errors.length > 0;
+        addLine(
+          hasErrors ? "error" : "complete",
+          `[API v2] Sync complete: ${result.created.length} created, ${result.updated.length} updated, ${result.errors.length} errors`
+        );
+      } catch (error) {
+        addLine(
+          "error",
+          `[API v2] Sync failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+        unsubscribe();
+      } finally {
+        setIsSyncing(false);
+        setSyncProgress(null);
+      }
+
+      return;
+    }
+
+    // CLI mode: existing behavior
+    const resourceNames = Array.from(selectedResources);
     setShowResourcePicker(null);
     await executeCommand(action, [type, ...resourceNames]);
   };
@@ -596,12 +625,7 @@ function App() {
   if (currentView === "settings") {
     return (
       <div className="h-screen flex flex-col bg-background">
-        {/* Title Bar */}
-        <div className="h-10 bg-app-950 flex items-center justify-center border-b border-border draggable">
-          <span className="text-sm font-medium text-muted-foreground">
-            sb-mig GUI
-          </span>
-        </div>
+        <TitleBar />
         <SettingsScreen
           oauthToken={oauthToken}
           onOauthTokenChange={setOauthToken}
@@ -618,12 +642,7 @@ function App() {
   // Main view
   return (
     <div className="h-screen flex flex-col bg-background">
-      {/* Title Bar (macOS style) */}
-      <div className="h-10 bg-app-950 flex items-center justify-center border-b border-border draggable">
-        <span className="text-sm font-medium text-muted-foreground">
-          sb-mig GUI
-        </span>
-      </div>
+      <TitleBar />
 
       {/* Header */}
       <header className="flex-shrink-0 px-6 py-4 border-b border-border">
@@ -642,58 +661,29 @@ function App() {
 
           <div className="flex items-center gap-3">
             {/* Execution Mode Toggle */}
-            <div className="flex items-center gap-1 p-1 rounded-lg bg-app-900 border border-border">
-              <button
-                onClick={async () => {
-                  setExecutionMode("api");
-                  await window.sbmigGui.db.setSetting(
-                    "sbmig_execution_mode",
-                    "api"
-                  );
-                }}
-                className={`px-3 py-1 rounded text-xs font-medium transition-all ${
-                  executionMode === "api"
-                    ? "bg-storyblok-green text-white shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                ⚡ API
-              </button>
-              <button
-                onClick={async () => {
-                  setExecutionMode("cli");
-                  await window.sbmigGui.db.setSetting(
-                    "sbmig_execution_mode",
-                    "cli"
-                  );
-                }}
-                className={`px-3 py-1 rounded text-xs font-medium transition-all ${
-                  executionMode === "cli"
-                    ? "bg-amber-500 text-white shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                💻 CLI
-              </button>
-            </div>
+            <ToggleGroup
+              options={[
+                { value: "api", label: "API", icon: "⚡" },
+                { value: "cli", label: "CLI", icon: "💻" },
+              ]}
+              value={executionMode}
+              onChange={async (value) => {
+                setExecutionMode(value as ExecutionMode);
+                await window.sbmigGui.db.setSetting("sbmig_execution_mode", value);
+              }}
+            />
 
             {/* Status indicators */}
             {validationResult && (
-              <span
-                className={`px-3 py-1 rounded-lg text-sm ${
-                  validationResult.success
-                    ? "bg-storyblok-green/20 text-storyblok-green"
-                    : "bg-destructive/20 text-destructive"
-                }`}
-              >
+              <Badge variant={validationResult.success ? "success" : "error"}>
                 {validationResult.message}
-              </span>
+              </Badge>
             )}
             {isRunning && (
-              <span className="px-3 py-1 rounded-lg text-sm bg-yellow-500/20 text-yellow-400 flex items-center gap-2">
+              <Badge variant="warning">
                 <Spinner size="sm" />
                 Running...
-              </span>
+              </Badge>
             )}
 
             {/* Settings Button */}
@@ -711,18 +701,17 @@ function App() {
       {/* No space configured prompt */}
       {spaces.length === 0 && (
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <span className="text-6xl mb-4 block">🚀</span>
-            <h2 className="text-xl font-semibold mb-2">
-              Welcome to sb-mig GUI
-            </h2>
-            <p className="text-muted-foreground mb-4">
-              Get started by configuring your first Storyblok space
-            </p>
-            <Button onClick={() => setCurrentView("settings")}>
-              ⚙️ Open Settings
-            </Button>
-          </div>
+          <EmptyState
+            icon="🚀"
+            title="Welcome to sb-mig GUI"
+            message="Get started by configuring your first Storyblok space"
+            size="lg"
+            action={
+              <Button onClick={() => setCurrentView("settings")}>
+                ⚙️ Open Settings
+              </Button>
+            }
+          />
         </div>
       )}
 
@@ -747,13 +736,10 @@ function App() {
 
             <div className="space-y-2">
               {spaces.map((space) => (
-                <div
+                <SpaceCard
                   key={space.id}
-                  className={`p-3 rounded-lg border cursor-pointer transition-all ${
-                    activeSpaceId === space.id
-                      ? "bg-primary/10 border-primary/30 text-primary"
-                      : "bg-card border-border text-card-foreground hover:border-muted-foreground"
-                  }`}
+                  space={space}
+                  isActive={activeSpaceId === space.id}
                   onClick={async () => {
                     setActiveSpaceId(space.id);
                     await window.sbmigGui.db.setSetting(
@@ -761,20 +747,7 @@ function App() {
                       space.id
                     );
                   }}
-                >
-                  <div className="font-medium text-sm">{space.name}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">
-                    ID: {space.spaceId}
-                  </div>
-                  {space.workingDir && (
-                    <div
-                      className="text-xs text-muted-foreground truncate mt-1"
-                      title={space.workingDir}
-                    >
-                      📁 {space.workingDir.split("/").slice(-2).join("/")}
-                    </div>
-                  )}
-                </div>
+                />
               ))}
             </div>
 
@@ -798,10 +771,7 @@ function App() {
                 {/* Operations Bar */}
                 <div className="flex-shrink-0 p-4 border-b border-border">
                   <div className="flex flex-wrap gap-2">
-                    <div className="flex items-center gap-1 pr-3 border-r border-border">
-                      <span className="text-xs text-muted-foreground uppercase mr-2">
-                        Sync
-                      </span>
+                    <ButtonGroup label="Sync">
                       <Button
                         size="sm"
                         variant="secondary"
@@ -813,9 +783,7 @@ function App() {
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={() =>
-                          openResourcePicker("datasources", "sync")
-                        }
+                        onClick={() => openResourcePicker("datasources", "sync")}
                         disabled={isRunning || !activeSpaceId}
                       >
                         Datasources
@@ -828,18 +796,13 @@ function App() {
                       >
                         Roles
                       </Button>
-                    </div>
+                    </ButtonGroup>
 
-                    <div className="flex items-center gap-1 pr-3 border-r border-border">
-                      <span className="text-xs text-muted-foreground uppercase mr-2">
-                        Backup
-                      </span>
+                    <ButtonGroup label="Backup">
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={() =>
-                          openResourcePicker("components", "backup")
-                        }
+                        onClick={() => openResourcePicker("components", "backup")}
                         disabled={isRunning || !activeSpaceId}
                       >
                         Components
@@ -847,19 +810,14 @@ function App() {
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={() =>
-                          executeCommand("backup", ["stories", "--all"])
-                        }
+                        onClick={() => executeCommand("backup", ["stories", "--all"])}
                         disabled={isRunning || !activeSpaceId}
                       >
                         Stories
                       </Button>
-                    </div>
+                    </ButtonGroup>
 
-                    <div className="flex items-center gap-1 pr-3 border-r border-border">
-                      <span className="text-xs text-muted-foreground uppercase mr-2">
-                        Copy
-                      </span>
+                    <ButtonGroup label="Copy">
                       <Button
                         size="sm"
                         variant="secondary"
@@ -868,18 +826,13 @@ function App() {
                       >
                         Stories
                       </Button>
-                    </div>
+                    </ButtonGroup>
 
-                    <div className="flex items-center gap-1 pr-3 border-r border-border">
-                      <span className="text-xs text-muted-foreground uppercase mr-2">
-                        Other
-                      </span>
+                    <ButtonGroup label="Other" showDivider={false}>
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={() =>
-                          executeCommand("discover", ["components", "--all"])
-                        }
+                        onClick={() => executeCommand("discover", ["components", "--all"])}
                         disabled={isRunning || !activeSpaceId}
                       >
                         Discover
@@ -900,7 +853,7 @@ function App() {
                       >
                         Validate
                       </Button>
-                    </div>
+                    </ButtonGroup>
 
                     {isRunning && (
                       <Button
@@ -916,26 +869,25 @@ function App() {
 
                 {/* Terminal Output */}
                 <div className="flex-1 flex flex-col overflow-hidden">
-                  {/* Terminal Header */}
-                  <div className="flex items-center justify-between px-4 py-2 bg-app-950 border-b border-border">
-                    <span className="text-xs text-muted-foreground uppercase tracking-wider">
-                      Terminal Output
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={autoScroll}
-                          onChange={(e) => setAutoScroll(e.target.checked)}
-                          className="rounded"
-                        />
-                        Auto-scroll
-                      </label>
-                      <Button variant="ghost" size="sm" onClick={clearOutput}>
-                        Clear
-                      </Button>
-                    </div>
-                  </div>
+                  <PanelHeader
+                    title="Terminal Output"
+                    rightContent={
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={autoScroll}
+                            onChange={(e) => setAutoScroll(e.target.checked)}
+                            className="rounded"
+                          />
+                          Auto-scroll
+                        </label>
+                        <Button variant="ghost" size="sm" onClick={clearOutput}>
+                          Clear
+                        </Button>
+                      </div>
+                    }
+                  />
 
                   {/* Terminal Content */}
                   <div
@@ -943,20 +895,14 @@ function App() {
                     className="flex-1 overflow-y-auto p-4 bg-app-950 terminal-output font-mono text-sm"
                   >
                     {output.length === 0 ? (
-                      <div className="text-muted-foreground italic">
-                        No output yet. Select a space and run a command to see
-                        results here.
-                      </div>
+                      <EmptyState
+                        icon="📝"
+                        message="No output yet. Select a space and run a command to see results here."
+                        size="sm"
+                      />
                     ) : (
                       output.map((line) => (
-                        <div
-                          key={line.id}
-                          className={`whitespace-pre-wrap ${getLineColor(
-                            line.type
-                          )}`}
-                        >
-                          {line.data}
-                        </div>
+                        <OutputLine key={line.id} line={line} />
                       ))
                     )}
                   </div>
@@ -978,189 +924,156 @@ function App() {
 
                   {/* Available Operations */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Copy Stories Card */}
-                    <div className="bg-card border border-border rounded-xl p-6 hover:border-primary/50 transition-colors">
-                      <div className="flex items-start gap-4">
-                        <div className="w-12 h-12 rounded-lg bg-storyblok-green/20 flex items-center justify-center text-2xl">
-                          📋
-                        </div>
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-lg mb-1">
-                            Copy Stories
-                          </h3>
-                          <p className="text-sm text-muted-foreground mb-4">
-                            Copy stories between spaces with folder structure
-                            preserved
-                          </p>
-                          <Button
-                            onClick={() => setShowStoryCopyModal(true)}
-                            disabled={spaces.length < 1}
-                            className="w-full"
-                          >
-                            Open Story Copy
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
+                    <FeatureCard
+                      icon="📋"
+                      iconBg="storyblok-green"
+                      title="Copy Stories"
+                      description="Copy stories between spaces with folder structure preserved"
+                    >
+                      <Button
+                        onClick={() => setShowStoryCopyModal(true)}
+                        disabled={spaces.length < 1}
+                        className="w-full"
+                      >
+                        Open Story Copy
+                      </Button>
+                    </FeatureCard>
 
-                    {/* Browse Stories Card */}
-                    <div className="bg-card border border-border rounded-xl p-6 hover:border-primary/50 transition-colors">
-                      <div className="flex items-start gap-4">
-                        <div className="w-12 h-12 rounded-lg bg-blue-500/20 flex items-center justify-center text-2xl">
-                          🗂️
-                        </div>
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-lg mb-1">
-                            Browse Stories
-                          </h3>
-                          <p className="text-sm text-muted-foreground mb-4">
-                            View story tree structure from any space
-                          </p>
-                          <Button
-                            variant="secondary"
-                            onClick={() => {
-                              if (activeSpace) {
-                                setSourceSpaceId(activeSpace.id);
-                                loadSourceStories(activeSpace.id);
-                                setShowStoryCopyModal(true);
-                              }
-                            }}
-                            disabled={!activeSpaceId}
-                            className="w-full"
-                          >
-                            Browse Current Space
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
+                    <FeatureCard
+                      icon="🗂️"
+                      iconBg="blue-500"
+                      title="Browse Stories"
+                      description="View story tree structure from any space"
+                    >
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          if (activeSpace) {
+                            setSourceSpaceId(activeSpace.id);
+                            loadSourceStories(activeSpace.id);
+                            setShowStoryCopyModal(true);
+                          }
+                        }}
+                        disabled={!activeSpaceId}
+                        className="w-full"
+                      >
+                        Browse Current Space
+                      </Button>
+                    </FeatureCard>
 
-                    {/* Discover Resources Card */}
-                    <div className="bg-card border border-border rounded-xl p-6 hover:border-primary/50 transition-colors">
-                      <div className="flex items-start gap-4">
-                        <div className="w-12 h-12 rounded-lg bg-purple-500/20 flex items-center justify-center text-2xl">
-                          🔍
-                        </div>
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-lg mb-1">
-                            Discover Resources
-                          </h3>
-                          <p className="text-sm text-muted-foreground mb-4">
-                            Find components, datasources, and roles in your
-                            project
-                          </p>
-                          <div className="flex gap-2">
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() =>
-                                openResourcePicker("components", "sync")
-                              }
-                              disabled={!activeSpaceId}
-                            >
-                              Components
-                            </Button>
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() =>
-                                openResourcePicker("datasources", "sync")
-                              }
-                              disabled={!activeSpaceId}
-                            >
-                              Datasources
-                            </Button>
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() =>
-                                openResourcePicker("roles", "sync")
-                              }
-                              disabled={!activeSpaceId}
-                            >
-                              Roles
-                            </Button>
-                          </div>
-                        </div>
+                    <FeatureCard
+                      icon="🔄"
+                      iconBg="storyblok-green"
+                      title="Sync Resources"
+                      description="Sync components, datasources, and roles to Storyblok"
+                    >
+                      <div className="flex gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => openResourcePicker("components", "sync")}
+                          disabled={!activeSpaceId}
+                        >
+                          Components
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => openResourcePicker("datasources", "sync")}
+                          disabled={!activeSpaceId}
+                        >
+                          Datasources
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => openResourcePicker("roles", "sync")}
+                          disabled={!activeSpaceId}
+                        >
+                          Roles
+                        </Button>
                       </div>
-                    </div>
+                    </FeatureCard>
 
-                    {/* Coming Soon Card */}
-                    <div className="bg-card/50 border border-border/50 rounded-xl p-6 opacity-60">
-                      <div className="flex items-start gap-4">
-                        <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center text-2xl">
-                          🚧
-                        </div>
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-lg mb-1">
-                            More Coming Soon
-                          </h3>
-                          <p className="text-sm text-muted-foreground mb-4">
-                            Sync & Backup via API v2 are in development
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Switch to CLI mode for full sync/backup
-                            functionality
-                          </p>
-                        </div>
-                      </div>
-                    </div>
+                    <FeatureCard
+                      icon="💾"
+                      iconBg="muted"
+                      title="Backup Resources"
+                      description="Backup via API v2 coming soon"
+                      disabled
+                    >
+                      <p className="text-xs text-muted-foreground">
+                        Switch to CLI mode for backup functionality
+                      </p>
+                    </FeatureCard>
                   </div>
 
-                  {/* Status/Recent Activity */}
+                  {/* Copy Progress */}
                   {copyProgress && (
-                    <div className="bg-card border border-border rounded-xl p-6">
-                      <h3 className="font-semibold mb-4">Copy Progress</h3>
-                      <div className="space-y-3">
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Status:</span>
-                          <span
-                            className={
-                              copyProgress.status === "done"
-                                ? "text-storyblok-green"
-                                : copyProgress.status === "error"
-                                ? "text-destructive"
-                                : "text-yellow-400"
-                            }
+                    <ProgressBar
+                      current={copyProgress.current}
+                      total={copyProgress.total}
+                      title="Copy Progress"
+                      status={
+                        copyProgress.status === "done"
+                          ? "✅ Complete"
+                          : copyProgress.status === "error"
+                            ? "❌ Error"
+                            : `⏳ ${copyProgress.currentStory}`
+                      }
+                      showCard
+                    />
+                  )}
+
+                  {/* Sync Progress Bar */}
+                  {isSyncing && syncProgress && (
+                    <ProgressBar
+                      current={syncProgress.current ?? 0}
+                      total={syncProgress.total ?? 0}
+                      title="Sync Progress"
+                      status={
+                        syncProgress.type === "start"
+                          ? "Starting sync..."
+                          : syncProgress.type === "progress"
+                            ? `${syncProgress.action === "creating" ? "Creating" : syncProgress.action === "updating" ? "Updating" : syncProgress.action === "created" ? "✓ Created" : syncProgress.action === "updated" ? "✓ Updated" : syncProgress.action === "error" ? "✗ Error" : ""}: ${syncProgress.name || ""}`
+                            : syncProgress.type === "complete"
+                              ? "Complete!"
+                              : "Syncing..."
+                      }
+                      showCard
+                    />
+                  )}
+
+                  {/* API Mode Output Log */}
+                  {output.length > 0 && (
+                    <div className="bg-card border border-border rounded-xl overflow-hidden">
+                      <PanelHeader
+                        title="Sync Log"
+                        rightContent={
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={clearOutput}
+                            className="text-xs"
                           >
-                            {copyProgress.status === "done"
-                              ? "✅ Complete"
-                              : copyProgress.status === "error"
-                              ? "❌ Error"
-                              : "⏳ " + copyProgress.currentStory}
-                          </span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">
-                            Progress:
-                          </span>
-                          <span>
-                            {copyProgress.current} / {copyProgress.total}
-                          </span>
-                        </div>
-                        <div className="w-full bg-muted rounded-full h-2">
-                          <div
-                            className="bg-storyblok-green h-2 rounded-full transition-all"
-                            style={{
-                              width: `${
-                                (copyProgress.current / copyProgress.total) *
-                                100
-                              }%`,
-                            }}
-                          />
-                        </div>
+                            Clear
+                          </Button>
+                        }
+                      />
+                      <div className="p-4 max-h-48 overflow-y-auto font-mono text-xs space-y-1">
+                        {output.map((line) => (
+                          <OutputLine key={line.id} line={line} />
+                        ))}
                       </div>
                     </div>
                   )}
 
                   {/* Info Box */}
-                  <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4">
-                    <p className="text-sm text-blue-400">
-                      <strong>💡 Tip:</strong> API mode provides faster
-                      operations with structured responses. For full CLI
-                      functionality (sync, backup, debug), switch to CLI mode
-                      using the toggle in the header.
-                    </p>
-                  </div>
+                  <InfoBox variant="tip">
+                    API mode provides faster operations with structured responses.
+                    Sync is fully supported. For backup and debug, switch to CLI
+                    mode using the toggle in the header.
+                  </InfoBox>
                 </div>
               </div>
             )}
@@ -1247,19 +1160,14 @@ function App() {
                 </div>
                 <div className="h-[400px] overflow-y-auto">
                   {isLoadingStories ? (
-                    <div className="flex items-center justify-center h-full">
-                      <Spinner size="lg" />
-                      <span className="ml-3 text-muted-foreground">
-                        Loading stories...
-                      </span>
-                    </div>
+                    <LoadingState message="Loading stories..." className="h-full" />
                   ) : !sourceSpaceId ? (
                     <div className="flex items-center justify-center h-full text-muted-foreground">
                       Select a source space to load stories
                     </div>
                   ) : storyTree.length === 0 ? (
-                    <div className="flex items-center justify-center h-full text-muted-foreground">
-                      No stories found
+                    <div className="flex items-center justify-center h-full">
+                      <EmptyState icon="📭" message="No stories found" size="sm" />
                     </div>
                   ) : (
                     <VirtualStoryTree
@@ -1337,9 +1245,7 @@ function App() {
                           Select a target space first
                         </div>
                       ) : isLoadingTargetTree ? (
-                        <div className="flex items-center justify-center h-full">
-                          <Spinner size="lg" />
-                        </div>
+                        <LoadingState className="h-full" />
                       ) : (
                         <DestinationFolderPicker
                           nodes={targetStoryTree}
@@ -1382,46 +1288,38 @@ function App() {
             )}
           </div>
 
-          <div className="flex gap-3 pt-4 border-t border-border mt-4">
-            <div className="flex-1 text-sm text-muted-foreground">
-              {selectedStoryIds.size > 0 && (
-                <span>
+          <ModalFooter
+            leftContent={
+              selectedStoryIds.size > 0 && (
+                <span className="text-sm text-muted-foreground">
                   {selectedStoryIds.size}{" "}
                   {selectedStoryIds.size === 1 ? "story" : "stories"} selected
                 </span>
-              )}
-            </div>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setShowStoryCopyModal(false);
-                resetStoryCopyState();
-              }}
-              disabled={isCopying}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={executeStoryCopy}
-              disabled={
-                selectedStoryIds.size === 0 ||
-                !sourceSpaceId ||
-                !targetSpaceId ||
-                isCopying
-              }
-            >
-              {isCopying ? (
+              )
+            }
+            onCancel={() => {
+              setShowStoryCopyModal(false);
+              resetStoryCopyState();
+            }}
+            cancelDisabled={isCopying}
+            onSubmit={executeStoryCopy}
+            submitDisabled={
+              selectedStoryIds.size === 0 ||
+              !sourceSpaceId ||
+              !targetSpaceId ||
+              isCopying
+            }
+            submitContent={
+              isCopying ? (
                 <>
                   <Spinner size="sm" className="mr-2" />
                   Copying...
                 </>
               ) : (
-                `Copy ${
-                  selectedStoryIds.size > 0 ? `(${selectedStoryIds.size})` : ""
-                }`
-              )}
-            </Button>
-          </div>
+                `Copy ${selectedStoryIds.size > 0 ? `(${selectedStoryIds.size})` : ""}`
+              )
+            }
+          />
         </Modal>
       )}
 
@@ -1435,19 +1333,15 @@ function App() {
         >
           <div className="space-y-4">
             {isDiscovering ? (
-              <div className="flex items-center justify-center py-8">
-                <Spinner size="lg" />
-                <span className="ml-3 text-muted-foreground">
-                  Discovering {showResourcePicker.type}...
-                </span>
-              </div>
+              <LoadingState
+                message={`Discovering ${showResourcePicker.type}...`}
+                className="py-8"
+              />
             ) : discoveredResources.length === 0 ? (
-              <div className="text-center py-8">
-                <span className="text-4xl mb-4 block">📭</span>
-                <p className="text-muted-foreground">
-                  No {showResourcePicker.type} found in the working directory.
-                </p>
-              </div>
+              <EmptyState
+                icon="📭"
+                message={`No ${showResourcePicker.type} found in the working directory.`}
+              />
             ) : (
               <>
                 <div className="flex items-center justify-between pb-3 border-b border-border">
@@ -1455,12 +1349,9 @@ function App() {
                     onClick={toggleAllResources}
                     className="flex items-center gap-2 text-sm hover:text-foreground transition-colors"
                   >
-                    <div
-                      className={`w-4 h-4 rounded border transition-colors ${
-                        selectedResources.size === discoveredResources.length
-                          ? "bg-primary border-primary"
-                          : "border-muted-foreground"
-                      }`}
+                    <Checkbox
+                      checked={selectedResources.size === discoveredResources.length}
+                      partial={selectedResources.size > 0 && selectedResources.size < discoveredResources.length}
                     />
                     Select All
                   </button>
@@ -1480,45 +1371,23 @@ function App() {
             )}
           </div>
 
-          <div className="flex gap-3 pt-4 border-t border-border mt-4">
-            <div className="flex-1" />
-            <Button variant="ghost" onClick={() => setShowResourcePicker(null)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={executeWithSelectedResources}
-              disabled={selectedResources.size === 0 || isDiscovering}
-            >
-              {showResourcePicker.action === "sync" ? "🔄" : "💾"}{" "}
-              {showResourcePicker.action.charAt(0).toUpperCase() +
-                showResourcePicker.action.slice(1)}{" "}
-              {selectedResources.size > 0 ? `(${selectedResources.size})` : ""}
-            </Button>
-          </div>
+          <ModalFooter
+            onCancel={() => setShowResourcePicker(null)}
+            onSubmit={executeWithSelectedResources}
+            submitDisabled={selectedResources.size === 0 || isDiscovering}
+            submitContent={
+              <>
+                {showResourcePicker.action === "sync" ? "🔄" : "💾"}{" "}
+                {showResourcePicker.action.charAt(0).toUpperCase() +
+                  showResourcePicker.action.slice(1)}{" "}
+                {selectedResources.size > 0 ? `(${selectedResources.size})` : ""}
+              </>
+            }
+          />
         </Modal>
       )}
     </div>
   );
-}
-
-/**
- * Get color class for output line type
- */
-function getLineColor(type: OutputLine["type"]): string {
-  switch (type) {
-    case "stdout":
-      return "text-foreground";
-    case "stderr":
-      return "text-yellow-400";
-    case "info":
-      return "text-blue-400";
-    case "error":
-      return "text-red-400";
-    case "complete":
-      return "text-storyblok-green";
-    default:
-      return "text-muted-foreground";
-  }
 }
 
 /**
@@ -1573,13 +1442,7 @@ function VirtualResourceList({
                 onClick={() => onToggleSelection(resource.name)}
                 className="w-full flex items-center gap-3 p-2 hover:bg-muted rounded transition-colors"
               >
-                <div
-                  className={`w-4 h-4 rounded border transition-colors flex-shrink-0 ${
-                    isSelected
-                      ? "bg-primary border-primary"
-                      : "border-muted-foreground"
-                  }`}
-                />
+                <Checkbox checked={isSelected} />
                 <div className="flex-1 text-left min-w-0">
                   <div className="font-medium text-sm truncate">
                     {resource.name}
@@ -1672,24 +1535,17 @@ function VirtualStoryTree({
                 style={{ paddingLeft: `${depth * 20 + 8}px` }}
               >
                 {node.is_folder && (
-                  <button
+                  <TreeChevron
+                    expanded={isExpanded}
                     onClick={() => onToggleExpand(node.id)}
-                    className="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-foreground"
-                  >
-                    {isExpanded ? "▼" : "▶"}
-                  </button>
+                  />
                 )}
                 {!node.is_folder && <div className="w-5" />}
 
-                <button
-                  onClick={() => onToggleSelect(node)}
-                  className={`w-4 h-4 rounded border transition-colors flex-shrink-0 ${
-                    isSelected
-                      ? "bg-primary border-primary"
-                      : isPartial
-                      ? "bg-primary/50 border-primary"
-                      : "border-muted-foreground"
-                  }`}
+                <Checkbox
+                  checked={isSelected}
+                  partial={isPartial}
+                  onChange={() => onToggleSelect(node)}
                 />
 
                 <span className="text-sm truncate flex-1">
@@ -1719,15 +1575,7 @@ function DestinationFolderPicker({
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
 
   const toggleExpand = (id: number) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
+    setExpandedIds((prev) => toggleSetItem(prev, id));
   };
 
   const renderNode = (
@@ -1747,15 +1595,13 @@ function DestinationFolderPicker({
           onClick={() => onSelect(node.full_slug)}
         >
           {node.children.length > 0 && (
-            <button
+            <TreeChevron
+              expanded={isExpanded}
               onClick={(e) => {
                 e.stopPropagation();
                 toggleExpand(node.id);
               }}
-              className="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-foreground"
-            >
-              {isExpanded ? "▼" : "▶"}
-            </button>
+            />
           )}
           {node.children.length === 0 && <div className="w-5" />}
 

@@ -113,6 +113,21 @@ export interface ApiV2SyncResult {
   errors: { name: string; message: string }[];
 }
 
+export interface ApiV2SyncProgressEvent {
+  type: "start" | "progress" | "complete";
+  current?: number;
+  total?: number;
+  name?: string;
+  action?:
+    | "creating"
+    | "updating"
+    | "created"
+    | "updated"
+    | "skipped"
+    | "error";
+  message?: string;
+}
+
 // ============================================================================
 // API Definition
 // ============================================================================
@@ -305,6 +320,21 @@ const api = {
       };
     },
 
+    onSyncProgress: (
+      callback: (progress: ApiV2SyncProgressEvent) => void
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        progress: ApiV2SyncProgressEvent
+      ) => {
+        callback(progress);
+      };
+      ipcRenderer.on("apiv2:syncProgress", handler);
+      return () => {
+        ipcRenderer.removeListener("apiv2:syncProgress", handler);
+      };
+    },
+
     discoverComponents: (
       workingDir: string
     ): Promise<SbmigDiscoveredComponent[]> =>
@@ -317,6 +347,23 @@ const api = {
 
     discoverRoles: (workingDir: string): Promise<SbmigDiscoveredComponent[]> =>
       ipcRenderer.invoke("apiv2:discoverRoles", workingDir),
+
+    // Combined load + sync for components (precompiles TS then syncs)
+    loadAndSyncComponents: (
+      filePaths: string[],
+      spaceId: string,
+      oauthToken: string,
+      workingDir: string,
+      options?: { presets?: boolean; ssot?: boolean }
+    ): Promise<ApiV2SyncResult> =>
+      ipcRenderer.invoke(
+        "apiv2:loadAndSyncComponents",
+        filePaths,
+        spaceId,
+        oauthToken,
+        workingDir,
+        options
+      ),
 
     syncRoles: (
       spaceId: string,

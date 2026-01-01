@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Button, Input, Modal } from '../../components/ui'
+import { Button, Input, Modal, EmptyState, InfoBox } from '../../components/ui'
 
 /**
  * Stored space configuration
@@ -191,11 +191,11 @@ export function SettingsScreen({
             </p>
 
             {spaces.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <span className="text-4xl mb-4 block">📭</span>
-                <p>No spaces configured yet.</p>
-                <p className="text-sm mt-1">Click "Add Space" to get started.</p>
-              </div>
+              <EmptyState
+                icon="📭"
+                message="No spaces configured yet."
+                submessage="Click 'Add Space' to get started."
+              />
             ) : (
               <div className="space-y-3">
                 {spaces.map((space) => (
@@ -253,15 +253,14 @@ export function SettingsScreen({
           </section>
 
           {/* Info Section */}
-          <section className="bg-muted/50 rounded-xl border border-border p-6">
-            <h3 className="font-medium mb-2">💡 Tips</h3>
-            <ul className="text-sm text-muted-foreground space-y-1">
+          <InfoBox variant="tip" title="Tips">
+            <ul className="text-sm space-y-1 list-none p-0 m-0">
               <li>• The OAuth token is required for operations like copying stories between spaces</li>
               <li>• Each space needs its own Access Token (preview or public token)</li>
               <li>• The working directory should contain your project's <code className="px-1 bg-muted rounded">storyblok.config.js</code></li>
               <li>• You can quickly switch between spaces from the main view</li>
             </ul>
-          </section>
+          </InfoBox>
         </div>
       </div>
 

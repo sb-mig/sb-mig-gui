@@ -19,7 +19,107 @@ import {
   stories as apiV2Stories,
   discover as apiV2Discover,
   sync as apiV2Sync,
+  precompile as apiV2Precompile,
 } from "sb-mig/api-v2";
+
+interface LoadedComponent {
+  name: string;
+  filePath: string;
+  data: any;
+  error?: string;
+}
+
+/**
+ * Load component files, precompiling TypeScript using Rollup+SWC (same as sb-mig CLI)
+ */
+async function loadComponentFiles(
+  filePaths: string[],
+  workingDir: string
+): Promise<LoadedComponent[]> {
+  const results: LoadedComponent[] = [];
+
+  // Separate TypeScript and JavaScript files
+  const tsFiles = filePaths.filter((f) => f.endsWith(".ts"));
+  const jsFiles = filePaths.filter((f) => !f.endsWith(".ts"));
+
+  // Precompile TypeScript files using sb-mig's Rollup+SWC approach
+  const compiledTsFiles: Map<string, string> = new Map();
+  if (tsFiles.length > 0) {
+    console.log(
+      `[loadComponentFiles] Precompiling ${tsFiles.length} TypeScript files...`
+    );
+    const precompileResult = await apiV2Precompile.precompile(tsFiles, {
+      cacheDir: ".sb-mig-cache",
+      projectDir: workingDir,
+      flushCache: true,
+    });
+
+    // Map original TS files to their compiled CJS paths
+    for (const compiled of precompileResult.compiled) {
+      compiledTsFiles.set(compiled.input, compiled.outputCjs);
+    }
+
+    // Add precompile errors to results
+    for (const err of precompileResult.errors) {
+      const name =
+        err.input
+          .split("/")
+          .pop()
+          ?.replace(/\.sb\.ts$/, "")
+          .replace(/\.(datasource|roles)\.ts$/, "") || "unknown";
+      results.push({
+        name,
+        filePath: err.input,
+        data: null,
+        error: `Precompile failed: ${err.error}`,
+      });
+    }
+
+    console.log(
+      `[loadComponentFiles] Precompiled ${precompileResult.compiled.length} files, ${precompileResult.errors.length} errors`
+    );
+  }
+
+  // Process all files
+  for (const filePath of filePaths) {
+    // Skip TS files that failed to compile (already added to results)
+    if (filePath.endsWith(".ts") && !compiledTsFiles.has(filePath)) {
+      continue;
+    }
+
+    const name =
+      filePath
+        .split("/")
+        .pop()
+        ?.replace(/\.sb\.(js|cjs|mjs|ts)$/, "")
+        .replace(/\.(datasource|roles)\.(js|cjs|ts)$/, "")
+        .replace(/\.sb\.(datasource|roles)\.(js|cjs|ts)$/, "") || "unknown";
+
+    try {
+      // Use compiled path for TS files, original path for JS files
+      const moduleToLoad = compiledTsFiles.get(filePath) || filePath;
+
+      // Clear require cache to ensure fresh load
+      delete require.cache[require.resolve(moduleToLoad)];
+
+      // Use require for CJS or compiled files
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const loadedModule = require(moduleToLoad);
+      const data = loadedModule.default || loadedModule;
+
+      results.push({ name, filePath, data });
+    } catch (error) {
+      results.push({
+        name,
+        filePath,
+        data: null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return results;
+}
 
 // Determine if we're in development mode
 const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
@@ -375,6 +475,78 @@ function registerIpcHandlers() {
   ipcMain.handle("apiv2:discoverRoles", async (_event, workingDir: string) => {
     return await apiV2Discover.discoverRoles(workingDir);
   });
+
+  // Combined load + sync handler for components (loads files then syncs)
+  ipcMain.handle(
+    "apiv2:loadAndSyncComponents",
+    async (
+      _event,
+      filePaths: string[],
+      spaceId: string,
+      oauthToken: string,
+      workingDir: string,
+      options?: { presets?: boolean; ssot?: boolean }
+    ) => {
+      console.log(
+        `[apiv2:loadAndSyncComponents] Loading ${filePaths.length} files from ${workingDir}...`
+      );
+      console.log(
+        `[apiv2:loadAndSyncComponents] spaceId: "${spaceId}", oauthToken length: ${
+          oauthToken?.length || 0
+        }`
+      );
+
+      // Step 1: Load file contents (precompiles TypeScript using Rollup+SWC)
+      const loaded = await loadComponentFiles(filePaths, workingDir);
+
+      // Step 2: Separate successful loads from failures
+      const successfulLoads = loaded.filter((r) => !r.error);
+      const loadErrors = loaded
+        .filter((r) => r.error)
+        .map((r) => ({ name: r.name, message: r.error! }));
+
+      console.log(
+        `[apiv2:loadAndSyncComponents] Loaded ${successfulLoads.length} files, ${loadErrors.length} errors`
+      );
+
+      if (successfulLoads.length === 0) {
+        return {
+          created: [],
+          updated: [],
+          skipped: [],
+          errors: loadErrors,
+        };
+      }
+
+      // Step 3: Extract component data
+      const components = successfulLoads.map((r) => r.data);
+
+      // Step 4: Create client and sync with progress reporting
+      console.log(
+        `[apiv2:loadAndSyncComponents] Creating client with spaceId: "${spaceId}"`
+      );
+      const client = createClient({ spaceId, oauthToken });
+      console.log(
+        `[apiv2:loadAndSyncComponents] Client created, client.spaceId: "${client.spaceId}"`
+      );
+
+      const syncResult = await apiV2Sync.syncComponents(client, {
+        components,
+        presets: options?.presets ?? false,
+        ssot: options?.ssot ?? false,
+        onProgress: (event) => {
+          // Send progress events to renderer
+          mainWindow?.webContents.send("apiv2:syncProgress", event);
+        },
+      });
+
+      // Step 5: Combine results
+      return {
+        ...syncResult,
+        errors: [...syncResult.errors, ...loadErrors],
+      };
+    }
+  );
 
   ipcMain.handle(
     "apiv2:syncRoles",

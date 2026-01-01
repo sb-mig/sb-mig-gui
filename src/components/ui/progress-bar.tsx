@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 import { PanelHeader } from "./panel-header";
 
@@ -29,8 +30,9 @@ const variantColors = {
 
 /**
  * Progress bar component with optional card wrapper
+ * Memoized to prevent re-renders when props haven't changed
  */
-export function ProgressBar({
+export const ProgressBar = memo(function ProgressBar({
   current,
   total,
   label,
@@ -88,7 +90,7 @@ export function ProgressBar({
       <div className="p-4">{progressContent}</div>
     </div>
   );
-}
+});
 
 /**
  * Simplified progress card for copy/sync operations
@@ -108,7 +110,7 @@ export interface ProgressCardProps {
   className?: string;
 }
 
-export function ProgressCard({
+export const ProgressCard = memo(function ProgressCard({
   current,
   total,
   currentItem,
@@ -153,7 +155,7 @@ export function ProgressCard({
       </div>
     </div>
   );
-}
+});
 
 export default ProgressBar;
 

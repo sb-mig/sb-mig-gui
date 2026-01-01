@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Badge,
@@ -24,7 +24,11 @@ import {
   StoryblokSpace,
 } from "./screens/Settings/SettingsScreen";
 import { useOutput } from "./hooks/useOutput";
-import { toggleSetItem, addToSet, removeFromSet, hasAllItems } from "./lib/set-utils";
+import {
+  toggleSetItem,
+  addToSet,
+  removeFromSet,
+} from "./lib/set-utils";
 
 /**
  * Resource type for picker
@@ -113,8 +117,11 @@ function App() {
   const [autoScroll, setAutoScroll] = useState(true);
   const outputRef = useRef<HTMLDivElement>(null);
 
-  // Active space object and derived working directory
-  const activeSpace = spaces.find((s) => s.id === activeSpaceId) || null;
+  // Active space object and derived working directory (memoized)
+  const activeSpace = useMemo(
+    () => spaces.find((s) => s.id === activeSpaceId) || null,
+    [spaces, activeSpaceId]
+  );
   const workingDir = activeSpace?.workingDir || "";
 
   /**
@@ -186,17 +193,22 @@ function App() {
 
   /**
    * Auto-scroll to bottom when new output arrives
+   * Uses requestAnimationFrame to avoid layout thrashing
    */
   useEffect(() => {
     if (autoScroll && outputRef.current) {
-      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+      requestAnimationFrame(() => {
+        if (outputRef.current) {
+          outputRef.current.scrollTop = outputRef.current.scrollHeight;
+        }
+      });
     }
-  }, [output, autoScroll]);
+  }, [output.length, autoScroll]);
 
   /**
    * Run sb-mig debug command to validate configuration
    */
-  const handleValidate = async () => {
+  const handleValidate = useCallback(async () => {
     if (!workingDir) {
       setValidationResult({
         success: false,
@@ -223,7 +235,15 @@ function App() {
         message: result.error || "Validation failed",
       });
     }
-  };
+  }, [workingDir, oauthToken, activeSpace]);
+
+  /**
+   * Handle space selection from sidebar
+   */
+  const handleSpaceSelect = useCallback(async (spaceId: string) => {
+    setActiveSpaceId(spaceId);
+    await window.sbmigGui.db.setSetting("sbmig_active_space", spaceId);
+  }, []);
 
   /**
    * Execute an sb-mig command
@@ -236,7 +256,10 @@ function App() {
       }
 
       if (isRunning) {
-        addLine("error", "A command is already running. Please wait or stop it first.");
+        addLine(
+          "error",
+          "A command is already running. Please wait or stop it first."
+        );
         return;
       }
 
@@ -257,7 +280,6 @@ function App() {
     await window.sbmigGui.sbmig.killProcess();
     setIsRunning(false);
   };
-
 
   /**
    * Open resource picker
@@ -307,116 +329,159 @@ function App() {
   };
 
   /**
+   * Filter tree to only include folders (pure function, no deps)
+   */
+  const filterFoldersOnly = useCallback(
+    (nodes: StoryblokTreeNode[]): StoryblokTreeNode[] => {
+      return nodes
+        .filter((node) => node.is_folder)
+        .map((node) => ({
+          ...node,
+          children: filterFoldersOnly(node.children),
+        }));
+    },
+    []
+  );
+
+  /**
    * Load stories from source space
    */
-  const loadSourceStories = async (spaceId: string) => {
-    const space = spaces.find((s) => s.id === spaceId);
-    if (!space || !oauthToken) return;
+  const loadSourceStories = useCallback(
+    async (spaceId: string) => {
+      const space = spaces.find((s) => s.id === spaceId);
+      if (!space || !oauthToken) return;
 
-    setIsLoadingStories(true);
-    setStoryTree([]);
-    setSelectedStoryIds(new Set());
-    setExpandedFolders(new Set());
+      setIsLoadingStories(true);
+      setStoryTree([]);
+      setSelectedStoryIds(new Set());
+      setExpandedFolders(new Set());
 
-    try {
-      const result = await window.sbmigGui.apiV2.fetchStories(
-        space.spaceId,
-        oauthToken
-      );
-      setStoryTree(result.tree);
-    } catch {
-      // Failed to load stories
-    } finally {
-      setIsLoadingStories(false);
-    }
-  };
+      try {
+        const result = await window.sbmigGui.apiV2.fetchStories(
+          space.spaceId,
+          oauthToken
+        );
+        setStoryTree(result.tree);
+      } catch {
+        // Failed to load stories
+      } finally {
+        setIsLoadingStories(false);
+      }
+    },
+    [spaces, oauthToken]
+  );
 
   /**
    * Load target space story tree for destination picker
    */
-  const loadTargetStories = async (spaceId: string) => {
-    const space = spaces.find((s) => s.id === spaceId);
-    if (!space || !oauthToken) return;
+  const loadTargetStories = useCallback(
+    async (spaceId: string) => {
+      const space = spaces.find((s) => s.id === spaceId);
+      if (!space || !oauthToken) return;
 
-    setIsLoadingTargetTree(true);
-    setTargetStoryTree([]);
+      setIsLoadingTargetTree(true);
+      setTargetStoryTree([]);
 
-    try {
-      const result = await window.sbmigGui.apiV2.fetchStories(
-        space.spaceId,
-        oauthToken
-      );
-      // Filter to only show folders
-      const foldersOnly = filterFoldersOnly(result.tree);
-      setTargetStoryTree(foldersOnly);
-    } catch {
-      // Failed to load target stories
-    } finally {
-      setIsLoadingTargetTree(false);
-    }
-  };
-
-  /**
-   * Filter tree to only include folders
-   */
-  const filterFoldersOnly = (
-    nodes: StoryblokTreeNode[]
-  ): StoryblokTreeNode[] => {
-    return nodes
-      .filter((node) => node.is_folder)
-      .map((node) => ({
-        ...node,
-        children: filterFoldersOnly(node.children),
-      }));
-  };
+      try {
+        const result = await window.sbmigGui.apiV2.fetchStories(
+          space.spaceId,
+          oauthToken
+        );
+        // Filter to only show folders
+        const foldersOnly = filterFoldersOnly(result.tree);
+        setTargetStoryTree(foldersOnly);
+      } catch {
+        // Failed to load target stories
+      } finally {
+        setIsLoadingTargetTree(false);
+      }
+    },
+    [spaces, oauthToken, filterFoldersOnly]
+  );
 
   /**
    * Toggle folder expansion
    */
-  const toggleFolderExpansion = (nodeId: number) => {
+  const toggleFolderExpansion = useCallback((nodeId: number) => {
     setExpandedFolders((prev) => toggleSetItem(prev, nodeId));
-  };
+  }, []);
 
   /**
-   * Get all story IDs from a node
+   * Pre-compute all descendant IDs for each node (only recomputes when storyTree changes)
+   * This enables O(1) lookups instead of O(n) recursive traversal
    */
-  const getAllStoryIds = (node: StoryblokTreeNode): number[] => {
-    const ids: number[] = [node.id];
-    for (const child of node.children) {
-      ids.push(...getAllStoryIds(child));
-    }
-    return ids;
-  };
+  const nodeIdMap = useMemo(() => {
+    const map = new Map<number, number[]>();
+
+    const computeIds = (node: StoryblokTreeNode): number[] => {
+      const ids = [node.id];
+      for (const child of node.children) {
+        ids.push(...computeIds(child));
+      }
+      map.set(node.id, ids);
+      return ids;
+    };
+
+    storyTree.forEach(computeIds);
+    return map;
+  }, [storyTree]);
 
   /**
-   * Toggle story selection
+   * Pre-compute selection status for each node (recomputes when nodeIdMap or selection changes)
+   * Returns 'full' | 'partial' | 'none' for each node ID
    */
-  const toggleStorySelection = (node: StoryblokTreeNode) => {
-    const allIds = getAllStoryIds(node);
-    setSelectedStoryIds((prev) => {
-      const allSelected = hasAllItems(prev, allIds);
-      return allSelected ? removeFromSet(prev, allIds) : addToSet(prev, allIds);
+  const selectionStatus = useMemo(() => {
+    const status = new Map<number, "full" | "partial" | "none">();
+
+    nodeIdMap.forEach((allIds, nodeId) => {
+      const selectedCount = allIds.filter((id) =>
+        selectedStoryIds.has(id)
+      ).length;
+      if (selectedCount === 0) {
+        status.set(nodeId, "none");
+      } else if (selectedCount === allIds.length) {
+        status.set(nodeId, "full");
+      } else {
+        status.set(nodeId, "partial");
+      }
     });
-  };
+
+    return status;
+  }, [nodeIdMap, selectedStoryIds]);
 
   /**
-   * Check if node is fully selected
+   * Toggle story selection using pre-computed nodeIdMap (O(1) lookup)
    */
-  const isNodeFullySelected = (node: StoryblokTreeNode): boolean => {
-    const allIds = getAllStoryIds(node);
-    return allIds.every((id) => selectedStoryIds.has(id));
-  };
+  const toggleStorySelection = useCallback(
+    (node: StoryblokTreeNode) => {
+      const allIds = nodeIdMap.get(node.id) || [node.id];
+      setSelectedStoryIds((prev) => {
+        const allSelected = allIds.every((id) => prev.has(id));
+        return allSelected ? removeFromSet(prev, allIds) : addToSet(prev, allIds);
+      });
+    },
+    [nodeIdMap]
+  );
 
   /**
-   * Check if node is partially selected
+   * Check if node is fully selected (O(1) lookup via selectionStatus)
    */
-  const isNodePartiallySelected = (node: StoryblokTreeNode): boolean => {
-    const allIds = getAllStoryIds(node);
-    const selectedCount = allIds.filter((id) =>
-      selectedStoryIds.has(id)
-    ).length;
-    return selectedCount > 0 && selectedCount < allIds.length;
-  };
+  const isNodeFullySelected = useCallback(
+    (node: StoryblokTreeNode): boolean => {
+      return selectionStatus.get(node.id) === "full";
+    },
+    [selectionStatus]
+  );
+
+  /**
+   * Check if node is partially selected (O(1) lookup via selectionStatus)
+   */
+  const isNodePartiallySelected = useCallback(
+    (node: StoryblokTreeNode): boolean => {
+      return selectionStatus.get(node.id) === "partial";
+    },
+    [selectionStatus]
+  );
 
   /**
    * Execute story copy
@@ -490,7 +555,7 @@ function App() {
   /**
    * Reset story copy state
    */
-  const resetStoryCopyState = () => {
+  const resetStoryCopyState = useCallback(() => {
     setSourceSpaceId(null);
     setTargetSpaceId(null);
     setStoryTree([]);
@@ -500,25 +565,27 @@ function App() {
     setDestinationMode("browse");
     setTargetStoryTree([]);
     setCopyProgress(null);
-  };
+  }, []);
 
   /**
    * Toggle resource selection
    */
-  const toggleResourceSelection = (name: string) => {
+  const toggleResourceSelection = useCallback((name: string) => {
     setSelectedResources((prev) => toggleSetItem(prev, name));
-  };
+  }, []);
 
   /**
    * Select/deselect all resources
    */
-  const toggleAllResources = () => {
-    if (selectedResources.size === discoveredResources.length) {
-      setSelectedResources(new Set());
-    } else {
-      setSelectedResources(new Set(discoveredResources.map((r) => r.name)));
-    }
-  };
+  const toggleAllResources = useCallback(() => {
+    setSelectedResources((prev) => {
+      if (prev.size === discoveredResources.length) {
+        return new Set();
+      } else {
+        return new Set(discoveredResources.map((r) => r.name));
+      }
+    });
+  }, [discoveredResources]);
 
   /**
    * Execute with selected resources
@@ -561,17 +628,23 @@ function App() {
             progress.action === "created"
               ? "✅"
               : progress.action === "updated"
-                ? "📝"
-                : progress.action === "error"
-                  ? "❌"
-                  : "";
+              ? "📝"
+              : progress.action === "error"
+              ? "❌"
+              : "";
           if (
             actionEmoji &&
             ["created", "updated", "error"].includes(progress.action || "")
           ) {
             addLine(
               progress.action === "error" ? "error" : "info",
-              `${actionEmoji} ${progress.action === "created" ? "Created" : progress.action === "updated" ? "Updated" : "Error"}: ${progress.name}`
+              `${actionEmoji} ${
+                progress.action === "created"
+                  ? "Created"
+                  : progress.action === "updated"
+                  ? "Updated"
+                  : "Error"
+              }: ${progress.name}`
             );
           }
         }
@@ -595,10 +668,12 @@ function App() {
       } catch (error) {
         addLine(
           "error",
-          `[API v2] Sync failed: ${error instanceof Error ? error.message : String(error)}`
+          `[API v2] Sync failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
         );
-        unsubscribe();
       } finally {
+        unsubscribe(); // Always cleanup IPC listener
         setIsSyncing(false);
         setSyncProgress(null);
       }
@@ -669,7 +744,10 @@ function App() {
               value={executionMode}
               onChange={async (value) => {
                 setExecutionMode(value as ExecutionMode);
-                await window.sbmigGui.db.setSetting("sbmig_execution_mode", value);
+                await window.sbmigGui.db.setSetting(
+                  "sbmig_execution_mode",
+                  value
+                );
               }}
             />
 
@@ -740,13 +818,7 @@ function App() {
                   key={space.id}
                   space={space}
                   isActive={activeSpaceId === space.id}
-                  onClick={async () => {
-                    setActiveSpaceId(space.id);
-                    await window.sbmigGui.db.setSetting(
-                      "sbmig_active_space",
-                      space.id
-                    );
-                  }}
+                  onClick={() => handleSpaceSelect(space.id)}
                 />
               ))}
             </div>
@@ -783,7 +855,9 @@ function App() {
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={() => openResourcePicker("datasources", "sync")}
+                        onClick={() =>
+                          openResourcePicker("datasources", "sync")
+                        }
                         disabled={isRunning || !activeSpaceId}
                       >
                         Datasources
@@ -802,7 +876,9 @@ function App() {
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={() => openResourcePicker("components", "backup")}
+                        onClick={() =>
+                          openResourcePicker("components", "backup")
+                        }
                         disabled={isRunning || !activeSpaceId}
                       >
                         Components
@@ -810,7 +886,9 @@ function App() {
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={() => executeCommand("backup", ["stories", "--all"])}
+                        onClick={() =>
+                          executeCommand("backup", ["stories", "--all"])
+                        }
                         disabled={isRunning || !activeSpaceId}
                       >
                         Stories
@@ -832,7 +910,9 @@ function App() {
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={() => executeCommand("discover", ["components", "--all"])}
+                        onClick={() =>
+                          executeCommand("discover", ["components", "--all"])
+                        }
                         disabled={isRunning || !activeSpaceId}
                       >
                         Discover
@@ -940,28 +1020,6 @@ function App() {
                     </FeatureCard>
 
                     <FeatureCard
-                      icon="🗂️"
-                      iconBg="blue-500"
-                      title="Browse Stories"
-                      description="View story tree structure from any space"
-                    >
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          if (activeSpace) {
-                            setSourceSpaceId(activeSpace.id);
-                            loadSourceStories(activeSpace.id);
-                            setShowStoryCopyModal(true);
-                          }
-                        }}
-                        disabled={!activeSpaceId}
-                        className="w-full"
-                      >
-                        Browse Current Space
-                      </Button>
-                    </FeatureCard>
-
-                    <FeatureCard
                       icon="🔄"
                       iconBg="storyblok-green"
                       title="Sync Resources"
@@ -971,7 +1029,9 @@ function App() {
                         <Button
                           variant="secondary"
                           size="sm"
-                          onClick={() => openResourcePicker("components", "sync")}
+                          onClick={() =>
+                            openResourcePicker("components", "sync")
+                          }
                           disabled={!activeSpaceId}
                         >
                           Components
@@ -979,7 +1039,9 @@ function App() {
                         <Button
                           variant="secondary"
                           size="sm"
-                          onClick={() => openResourcePicker("datasources", "sync")}
+                          onClick={() =>
+                            openResourcePicker("datasources", "sync")
+                          }
                           disabled={!activeSpaceId}
                         >
                           Datasources
@@ -1018,8 +1080,8 @@ function App() {
                         copyProgress.status === "done"
                           ? "✅ Complete"
                           : copyProgress.status === "error"
-                            ? "❌ Error"
-                            : `⏳ ${copyProgress.currentStory}`
+                          ? "❌ Error"
+                          : `⏳ ${copyProgress.currentStory}`
                       }
                       showCard
                     />
@@ -1035,10 +1097,22 @@ function App() {
                         syncProgress.type === "start"
                           ? "Starting sync..."
                           : syncProgress.type === "progress"
-                            ? `${syncProgress.action === "creating" ? "Creating" : syncProgress.action === "updating" ? "Updating" : syncProgress.action === "created" ? "✓ Created" : syncProgress.action === "updated" ? "✓ Updated" : syncProgress.action === "error" ? "✗ Error" : ""}: ${syncProgress.name || ""}`
-                            : syncProgress.type === "complete"
-                              ? "Complete!"
-                              : "Syncing..."
+                          ? `${
+                              syncProgress.action === "creating"
+                                ? "Creating"
+                                : syncProgress.action === "updating"
+                                ? "Updating"
+                                : syncProgress.action === "created"
+                                ? "✓ Created"
+                                : syncProgress.action === "updated"
+                                ? "✓ Updated"
+                                : syncProgress.action === "error"
+                                ? "✗ Error"
+                                : ""
+                            }: ${syncProgress.name || ""}`
+                          : syncProgress.type === "complete"
+                          ? "Complete!"
+                          : "Syncing..."
                       }
                       showCard
                     />
@@ -1070,9 +1144,9 @@ function App() {
 
                   {/* Info Box */}
                   <InfoBox variant="tip">
-                    API mode provides faster operations with structured responses.
-                    Sync is fully supported. For backup and debug, switch to CLI
-                    mode using the toggle in the header.
+                    API mode provides faster operations with structured
+                    responses. Sync is fully supported. For backup and debug,
+                    switch to CLI mode using the toggle in the header.
                   </InfoBox>
                 </div>
               </div>
@@ -1160,14 +1234,21 @@ function App() {
                 </div>
                 <div className="h-[400px] overflow-y-auto">
                   {isLoadingStories ? (
-                    <LoadingState message="Loading stories..." className="h-full" />
+                    <LoadingState
+                      message="Loading stories..."
+                      className="h-full"
+                    />
                   ) : !sourceSpaceId ? (
                     <div className="flex items-center justify-center h-full text-muted-foreground">
                       Select a source space to load stories
                     </div>
                   ) : storyTree.length === 0 ? (
                     <div className="flex items-center justify-center h-full">
-                      <EmptyState icon="📭" message="No stories found" size="sm" />
+                      <EmptyState
+                        icon="📭"
+                        message="No stories found"
+                        size="sm"
+                      />
                     </div>
                   ) : (
                     <VirtualStoryTree
@@ -1316,7 +1397,9 @@ function App() {
                   Copying...
                 </>
               ) : (
-                `Copy ${selectedStoryIds.size > 0 ? `(${selectedStoryIds.size})` : ""}`
+                `Copy ${
+                  selectedStoryIds.size > 0 ? `(${selectedStoryIds.size})` : ""
+                }`
               )
             }
           />
@@ -1350,8 +1433,13 @@ function App() {
                     className="flex items-center gap-2 text-sm hover:text-foreground transition-colors"
                   >
                     <Checkbox
-                      checked={selectedResources.size === discoveredResources.length}
-                      partial={selectedResources.size > 0 && selectedResources.size < discoveredResources.length}
+                      checked={
+                        selectedResources.size === discoveredResources.length
+                      }
+                      partial={
+                        selectedResources.size > 0 &&
+                        selectedResources.size < discoveredResources.length
+                      }
                     />
                     Select All
                   </button>
@@ -1380,7 +1468,9 @@ function App() {
                 {showResourcePicker.action === "sync" ? "🔄" : "💾"}{" "}
                 {showResourcePicker.action.charAt(0).toUpperCase() +
                   showResourcePicker.action.slice(1)}{" "}
-                {selectedResources.size > 0 ? `(${selectedResources.size})` : ""}
+                {selectedResources.size > 0
+                  ? `(${selectedResources.size})`
+                  : ""}
               </>
             }
           />
@@ -1478,23 +1568,25 @@ function VirtualStoryTree({
   isNodeFullySelected: (node: StoryblokTreeNode) => boolean;
   isNodePartiallySelected: (node: StoryblokTreeNode) => boolean;
 }) {
-  // Flatten the tree for virtualization
-  const flattenTree = (
-    nodes: StoryblokTreeNode[],
-    depth: number = 0
-  ): { node: StoryblokTreeNode; depth: number }[] => {
-    const result: { node: StoryblokTreeNode; depth: number }[] = [];
-    for (const node of nodes) {
-      result.push({ node, depth });
-      if (node.is_folder && expandedIds.has(node.id)) {
-        result.push(...flattenTree(node.children, depth + 1));
-      }
-    }
-    return result;
-  };
-
-  const flatNodes = flattenTree(nodes);
   const parentRef = useRef<HTMLDivElement>(null);
+
+  // Memoize flattened tree - only recompute when nodes or expandedIds change
+  const flatNodes = useMemo(() => {
+    const flatten = (
+      treeNodes: StoryblokTreeNode[],
+      depth: number = 0
+    ): { node: StoryblokTreeNode; depth: number }[] => {
+      const result: { node: StoryblokTreeNode; depth: number }[] = [];
+      for (const node of treeNodes) {
+        result.push({ node, depth });
+        if (node.is_folder && expandedIds.has(node.id)) {
+          result.push(...flatten(node.children, depth + 1));
+        }
+      }
+      return result;
+    };
+    return flatten(nodes);
+  }, [nodes, expandedIds]);
 
   const virtualizer = useVirtualizer({
     count: flatNodes.length,

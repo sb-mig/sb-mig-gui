@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 
 export interface ButtonGroupProps {
@@ -13,8 +14,9 @@ export interface ButtonGroupProps {
 
 /**
  * Labeled button group for toolbar sections
+ * Memoized to prevent re-renders when props haven't changed
  */
-export function ButtonGroup({
+export const ButtonGroup = memo(function ButtonGroup({
   label,
   children,
   showDivider = true,
@@ -34,7 +36,7 @@ export function ButtonGroup({
       {children}
     </div>
   );
-}
+});
 
 export default ButtonGroup;
 

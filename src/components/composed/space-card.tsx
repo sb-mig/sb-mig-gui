@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 
 export interface SpaceCardSpace {
@@ -20,8 +21,9 @@ export interface SpaceCardProps {
 
 /**
  * Space card for sidebar space selection
+ * Memoized to prevent re-renders when props haven't changed
  */
-export function SpaceCard({
+export const SpaceCard = memo(function SpaceCard({
   space,
   isActive,
   onClick,
@@ -52,7 +54,7 @@ export function SpaceCard({
       )}
     </div>
   );
-}
+});
 
 export default SpaceCard;
 

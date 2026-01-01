@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 import { Spinner } from "./spinner";
 
@@ -12,8 +13,9 @@ export interface LoadingStateProps {
 
 /**
  * Loading state component with spinner and optional message
+ * Memoized to prevent re-renders when props haven't changed
  */
-export function LoadingState({
+export const LoadingState = memo(function LoadingState({
   message,
   size = "lg",
   className,
@@ -24,6 +26,6 @@ export function LoadingState({
       {message && <span className="ml-3 text-muted-foreground">{message}</span>}
     </div>
   );
-}
+});
 
 export default LoadingState;

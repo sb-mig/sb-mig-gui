@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 
 export interface BadgeProps {
@@ -19,8 +20,13 @@ const variantStyles = {
 
 /**
  * Badge/pill component for status indicators
+ * Memoized to prevent re-renders when props haven't changed
  */
-export function Badge({ variant = "default", children, className }: BadgeProps) {
+export const Badge = memo(function Badge({
+  variant = "default",
+  children,
+  className,
+}: BadgeProps) {
   return (
     <span
       className={cn(
@@ -32,7 +38,7 @@ export function Badge({ variant = "default", children, className }: BadgeProps) 
       {children}
     </span>
   );
-}
+});
 
 export default Badge;
 

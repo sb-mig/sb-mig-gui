@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 
 export type OutputLineType = "stdout" | "stderr" | "info" | "error" | "complete";
@@ -38,14 +39,20 @@ export function getLineColor(type: OutputLineType): string {
 
 /**
  * Terminal output line with appropriate coloring
+ * Memoized to prevent re-renders when props haven't changed
  */
-export function OutputLine({ line, className }: OutputLineProps) {
+export const OutputLine = memo(function OutputLine({
+  line,
+  className,
+}: OutputLineProps) {
   return (
-    <div className={cn("whitespace-pre-wrap", getLineColor(line.type), className)}>
+    <div
+      className={cn("whitespace-pre-wrap", getLineColor(line.type), className)}
+    >
       {line.data}
     </div>
   );
-}
+});
 
 export default OutputLine;
 

@@ -12,6 +12,9 @@ export interface OutputLine {
 
 export type OutputLineType = OutputLine["type"];
 
+/** Maximum number of output lines to retain (prevents memory bloat) */
+const MAX_OUTPUT_LINES = 1000;
+
 /**
  * Hook for managing terminal/log output state
  * Replaces repetitive setOutput patterns throughout the app
@@ -21,34 +24,44 @@ export function useOutput() {
   const lineIdRef = useRef(0);
 
   /**
-   * Add a single line to the output
+   * Add a single line to the output (capped at MAX_OUTPUT_LINES)
    */
   const addLine = useCallback((type: OutputLineType, data: string) => {
-    setOutput((prev) => [
-      ...prev,
-      {
-        id: lineIdRef.current++,
-        type,
-        data,
-        timestamp: Date.now(),
-      },
-    ]);
+    setOutput((prev) => {
+      const newLines = [
+        ...prev,
+        {
+          id: lineIdRef.current++,
+          type,
+          data,
+          timestamp: Date.now(),
+        },
+      ];
+      return newLines.length > MAX_OUTPUT_LINES
+        ? newLines.slice(-MAX_OUTPUT_LINES)
+        : newLines;
+    });
   }, []);
 
   /**
-   * Add multiple lines at once
+   * Add multiple lines at once (capped at MAX_OUTPUT_LINES)
    */
   const addLines = useCallback(
     (lines: { type: OutputLineType; data: string }[]) => {
-      setOutput((prev) => [
-        ...prev,
-        ...lines.map((line) => ({
-          id: lineIdRef.current++,
-          type: line.type,
-          data: line.data,
-          timestamp: Date.now(),
-        })),
-      ]);
+      setOutput((prev) => {
+        const newLines = [
+          ...prev,
+          ...lines.map((line) => ({
+            id: lineIdRef.current++,
+            type: line.type,
+            data: line.data,
+            timestamp: Date.now(),
+          })),
+        ];
+        return newLines.length > MAX_OUTPUT_LINES
+          ? newLines.slice(-MAX_OUTPUT_LINES)
+          : newLines;
+      });
     },
     []
   );

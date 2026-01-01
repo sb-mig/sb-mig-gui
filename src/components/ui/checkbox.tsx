@@ -18,8 +18,9 @@ export interface CheckboxProps {
 
 /**
  * Checkbox component with support for checked, partial (indeterminate), and unchecked states
+ * Memoized to prevent re-renders when props haven't changed
  */
-export const Checkbox = React.forwardRef<HTMLButtonElement, CheckboxProps>(
+export const Checkbox = React.memo(React.forwardRef<HTMLButtonElement, CheckboxProps>(
   (
     {
       checked = false,
@@ -86,7 +87,7 @@ export const Checkbox = React.forwardRef<HTMLButtonElement, CheckboxProps>(
       </button>
     );
   }
-);
+));
 
 Checkbox.displayName = "Checkbox";
 

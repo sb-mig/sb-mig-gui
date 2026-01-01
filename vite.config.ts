@@ -28,6 +28,7 @@ export default defineConfig({
               external: [
                 "electron",
                 "better-sqlite3",
+                "sucrase",
                 "sb-mig",
                 /^sb-mig\/.*/, // Also externalize sub-paths like sb-mig/api-v2
               ],

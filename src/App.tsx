@@ -55,6 +55,9 @@ function App() {
   // Execution mode (api = direct api-v2, cli = spawn sb-mig commands)
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("api");
 
+  // Debug mode - shows detailed logs and information
+  const [debugMode, setDebugMode] = useState(false);
+
   // Configuration state
   const [oauthToken, setOauthToken] = useState("");
   const [spaces, setSpaces] = useState<StoryblokSpace[]>([]);
@@ -165,6 +168,14 @@ function App() {
         );
         if (savedExecutionMode === "api" || savedExecutionMode === "cli") {
           setExecutionMode(savedExecutionMode);
+        }
+
+        // Load debug mode preference
+        const savedDebugMode = await window.sbmigGui.db.getSetting(
+          "sbmig_debug_mode"
+        );
+        if (savedDebugMode === "true") {
+          setDebugMode(true);
         }
       } catch (error) {
         // Failed to load config
@@ -298,7 +309,12 @@ function App() {
     setSelectedResources(new Set());
     setDiscoveredResources([]);
 
+    if (debugMode) {
+      addLine("info", `[DEBUG] Discovering ${type} in: ${workingDir}`);
+    }
+
     try {
+      const startTime = Date.now();
       let resources: SbmigDiscoveredComponent[] = [];
       switch (type) {
         case "components":
@@ -320,9 +336,20 @@ function App() {
               : await window.sbmigGui.sbmig.discoverRoles(workingDir);
           break;
       }
+      
+      if (debugMode) {
+        const duration = Date.now() - startTime;
+        addLine("info", `[DEBUG] Found ${resources.length} ${type} in ${duration}ms`);
+        resources.forEach((r) => {
+          addLine("info", `[DEBUG]   - ${r.name} (${r.type}): ${r.filePath}`);
+        });
+      }
+      
       setDiscoveredResources(resources);
-    } catch {
-      // Discovery failed
+    } catch (error) {
+      if (debugMode) {
+        addLine("error", `[DEBUG] Discovery failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     } finally {
       setIsDiscovering(false);
     }
@@ -618,6 +645,13 @@ function App() {
 
       // Show starting message
       addLine("info", `[API v2] Syncing ${filePaths.length} components...`);
+      
+      if (debugMode) {
+        addLine("info", `[DEBUG] Space ID: ${activeSpace.spaceId}`);
+        addLine("info", `[DEBUG] Working directory: ${workingDir}`);
+        addLine("info", `[DEBUG] Files to sync:`);
+        filePaths.forEach((fp) => addLine("info", `[DEBUG]   - ${fp}`));
+      }
 
       // Subscribe to progress events
       const unsubscribe = window.sbmigGui.apiV2.onSyncProgress((progress) => {
@@ -651,6 +685,7 @@ function App() {
       });
 
       try {
+        const startTime = Date.now();
         const result = await window.sbmigGui.apiV2.loadAndSyncComponents(
           filePaths,
           activeSpace.spaceId, // Use actual Storyblok space ID, not internal GUI ID
@@ -659,12 +694,30 @@ function App() {
           { presets: false, ssot: false }
         );
 
+        const duration = Date.now() - startTime;
+
         // Summary (individual items were logged via progress events)
         const hasErrors = result.errors.length > 0;
         addLine(
           hasErrors ? "error" : "complete",
           `[API v2] Sync complete: ${result.created.length} created, ${result.updated.length} updated, ${result.errors.length} errors`
         );
+        
+        if (debugMode) {
+          addLine("info", `[DEBUG] Sync completed in ${duration}ms`);
+          if (result.created.length > 0) {
+            addLine("info", `[DEBUG] Created: ${result.created.join(", ")}`);
+          }
+          if (result.updated.length > 0) {
+            addLine("info", `[DEBUG] Updated: ${result.updated.join(", ")}`);
+          }
+          if (result.errors.length > 0) {
+            addLine("error", `[DEBUG] Errors:`);
+            result.errors.forEach((e) => {
+              addLine("error", `[DEBUG]   - ${e.name}: ${e.message}`);
+            });
+          }
+        }
       } catch (error) {
         addLine(
           "error",
@@ -672,6 +725,9 @@ function App() {
             error instanceof Error ? error.message : String(error)
           }`
         );
+        if (debugMode) {
+          addLine("error", `[DEBUG] Full error: ${error instanceof Error ? error.stack : String(error)}`);
+        }
       } finally {
         unsubscribe(); // Always cleanup IPC listener
         setIsSyncing(false);
@@ -708,6 +764,8 @@ function App() {
           onSpacesChange={setSpaces}
           activeSpaceId={activeSpaceId}
           onActiveSpaceChange={setActiveSpaceId}
+          debugMode={debugMode}
+          onDebugModeChange={setDebugMode}
           onBack={() => setCurrentView("main")}
         />
       </div>

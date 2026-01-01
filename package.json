@@ -2,7 +2,10 @@
   "name": "sb-mig-gui",
   "version": "1.2.0",
   "description": "sb-mig GUI - Visual interface for Storyblok CMS management",
-  "author": "Marc Kraw",
+  "author": {
+    "name": "Marcin Krawczyk",
+    "email": "marckraw@icloud.com"
+  },
   "license": "MIT",
   "main": "dist-electron/main/index.js",
   "repository": {

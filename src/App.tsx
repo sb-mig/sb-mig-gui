@@ -120,6 +120,7 @@ function App() {
   const { output, addLine, clear: clearOutput } = useOutput();
   const [autoScroll, setAutoScroll] = useState(true);
   const outputRef = useRef<HTMLDivElement>(null);
+  const didLoadConfigRef = useRef(false);
 
   // Active space object and derived working directory (memoized)
   const activeSpace = useMemo(
@@ -132,34 +133,30 @@ function App() {
    * Load saved configuration on mount
    */
   useEffect(() => {
+    // React 18 StrictMode mounts twice in dev; protect expensive one-time init.
+    if (didLoadConfigRef.current) return;
+    didLoadConfigRef.current = true;
+
+    let cancelled = false;
+
     const loadConfig = async () => {
       try {
-        // Get bundled sb-mig version (ships with GUI, used in API mode)
-        try {
-          const bundledVersion = await window.sbmigGui.sbmig.getBundledVersion();
-          setSbmigBundledVersion(bundledVersion);
-        } catch {
-          // bundled version not available
-        }
+        // Load saved settings (keep splash/spinner time minimal)
+        const [
+          savedOauthToken,
+          savedSpacesJson,
+          savedActiveSpace,
+          savedExecutionMode,
+          savedDebugMode,
+        ] = await Promise.all([
+          window.sbmigGui.db.getSetting("sbmig_oauth_token"),
+          window.sbmigGui.db.getSetting("sbmig_spaces"),
+          window.sbmigGui.db.getSetting("sbmig_active_space"),
+          window.sbmigGui.db.getSetting("sbmig_execution_mode"),
+          window.sbmigGui.db.getSetting("sbmig_debug_mode"),
+        ]);
 
-        // Get installed sb-mig version (from system PATH, used in CLI mode)
-        try {
-          const installedVersion = await window.sbmigGui.sbmig.getVersion();
-          setSbmigInstalledVersion(installedVersion);
-        } catch {
-          // installed version not available
-        }
-
-        // Load saved settings
-        const savedOauthToken = await window.sbmigGui.db.getSetting(
-          "sbmig_oauth_token"
-        );
-        const savedSpacesJson = await window.sbmigGui.db.getSetting(
-          "sbmig_spaces"
-        );
-        const savedActiveSpace = await window.sbmigGui.db.getSetting(
-          "sbmig_active_space"
-        );
+        if (cancelled) return;
 
         if (savedOauthToken) setOauthToken(savedOauthToken);
         if (savedSpacesJson) {
@@ -172,29 +169,64 @@ function App() {
         if (savedActiveSpace) setActiveSpaceId(savedActiveSpace);
 
         // Load execution mode preference
-        const savedExecutionMode = await window.sbmigGui.db.getSetting(
-          "sbmig_execution_mode"
-        );
         if (savedExecutionMode === "api" || savedExecutionMode === "cli") {
           setExecutionMode(savedExecutionMode);
         }
 
         // Load debug mode preference
-        const savedDebugMode = await window.sbmigGui.db.getSetting(
-          "sbmig_debug_mode"
-        );
         if (savedDebugMode === "true") {
           setDebugMode(true);
         }
       } catch (error) {
         // Failed to load config
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
 
     loadConfig();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  /**
+   * Load sb-mig version lazily based on the active execution mode
+   * (these checks can be slow: PATH discovery + spawning shell commands)
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadVersion = async () => {
+      if (executionMode === "api") {
+        if (sbmigBundledVersion !== null) return;
+        try {
+          const bundledVersion =
+            await window.sbmigGui.sbmig.getBundledVersion();
+          if (!cancelled) setSbmigBundledVersion(bundledVersion);
+        } catch {
+          // bundled version not available
+        }
+        return;
+      }
+
+      // CLI mode
+      if (sbmigInstalledVersion !== null) return;
+      try {
+        const installedVersion = await window.sbmigGui.sbmig.getVersion();
+        if (!cancelled) setSbmigInstalledVersion(installedVersion);
+      } catch {
+        // installed version not available
+      }
+    };
+
+    loadVersion();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [executionMode, sbmigBundledVersion, sbmigInstalledVersion]);
 
   /**
    * Subscribe to output events

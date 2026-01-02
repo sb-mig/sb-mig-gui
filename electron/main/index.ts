@@ -14,16 +14,35 @@ import { sbmigService } from "../services/sbmig.service";
 import type { SbmigEnvironment } from "../services/sbmig.service";
 import { storyblokService } from "../services/storyblok.service";
 
-// Sucrase for TypeScript transpilation (pure JavaScript, no native code)
-import { transform as sucraseTransform } from "sucrase";
+// ============================================================================
+// Lazy-loaded heavy dependencies
+//
+// These modules are expensive to load (disk IO + parse).
+// We defer them until the first time they are actually needed to improve
+// app startup time (time-to-window and time-to-interactive).
+// ============================================================================
 
-// sb-mig api-v2 (CJS-safe via conditional exports)
-import {
-  createClient,
-  stories as apiV2Stories,
-  discover as apiV2Discover,
-  sync as apiV2Sync,
-} from "sb-mig/api-v2";
+type ApiV2Module = typeof import("sb-mig/api-v2");
+let apiV2Module: ApiV2Module | null = null;
+
+function getApiV2(): ApiV2Module {
+  if (!apiV2Module) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    apiV2Module = require("sb-mig/api-v2") as ApiV2Module;
+  }
+  return apiV2Module;
+}
+
+type SucraseTransform = typeof import("sucrase").transform;
+let cachedSucraseTransform: SucraseTransform | null = null;
+
+function getSucraseTransform(): SucraseTransform {
+  if (!cachedSucraseTransform) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    cachedSucraseTransform = require("sucrase").transform as SucraseTransform;
+  }
+  return cachedSucraseTransform;
+}
 
 /**
  * Get the bundled sb-mig version from node_modules
@@ -68,6 +87,7 @@ async function precompileWithSucrase(
 
   // Import fs for reading files
   const { readFile } = await import("fs/promises");
+  const sucraseTransform = getSucraseTransform();
 
   for (const tsFile of tsFiles) {
     const componentName = basename(tsFile).replace(/\.ts$/, "");
@@ -580,24 +600,27 @@ function registerIpcHandlers() {
   ipcMain.handle(
     "apiv2:fetchStories",
     async (_event, spaceId: string, oauthToken: string) => {
+      const { createClient, stories } = getApiV2();
       const client = createClient({ spaceId, oauthToken });
-      return await apiV2Stories.fetchStories(client);
+      return await stories.fetchStories(client);
     }
   );
 
   ipcMain.handle(
     "apiv2:fetchStory",
     async (_event, spaceId: string, storyId: number, oauthToken: string) => {
+      const { createClient, stories } = getApiV2();
       const client = createClient({ spaceId, oauthToken });
-      return await apiV2Stories.getStoryById(client, storyId);
+      return await stories.getStoryById(client, storyId);
     }
   );
 
   ipcMain.handle(
     "apiv2:getStoryBySlug",
     async (_event, spaceId: string, slug: string, oauthToken: string) => {
+      const { createClient, stories } = getApiV2();
       const client = createClient({ spaceId, oauthToken });
-      return await apiV2Stories.getStoryBySlug(client, slug);
+      return await stories.getStoryBySlug(client, slug);
     }
   );
 
@@ -611,6 +634,7 @@ function registerIpcHandlers() {
       destinationParentId: number | null,
       oauthToken: string
     ) => {
+      const { createClient, stories } = getApiV2();
       const sourceClient = createClient({
         spaceId: sourceSpaceId,
         oauthToken,
@@ -619,7 +643,7 @@ function registerIpcHandlers() {
         spaceId: targetSpaceId,
         oauthToken,
       });
-      return await apiV2Stories.copyStories(
+      return await stories.copyStories(
         sourceClient,
         targetClient,
         {
@@ -644,9 +668,10 @@ function registerIpcHandlers() {
 
         // Include external (node_modules) components but stay within project bounds
         // The discover function now has security checks to prevent escaping the project directory
-        const components = await apiV2Discover.discoverComponents(workingDir, {
+        const { discover } = getApiV2();
+        const components = await discover.discoverComponents(workingDir, {
           extensions,
-        } as Parameters<typeof apiV2Discover.discoverComponents>[1]);
+        });
         console.log(
           `[apiv2:discoverComponents] Found ${components.length} components (${
             components.filter((c) => c.type === "local").length
@@ -669,7 +694,8 @@ function registerIpcHandlers() {
         console.log(
           `[apiv2:discoverDatasources] Discovering in: ${workingDir}`
         );
-        const datasources = await apiV2Discover.discoverDatasources(workingDir);
+        const { discover } = getApiV2();
+        const datasources = await discover.discoverDatasources(workingDir);
         console.log(`[apiv2:discoverDatasources] Found ${datasources.length}`);
         return datasources;
       } catch (error) {
@@ -682,7 +708,8 @@ function registerIpcHandlers() {
   ipcMain.handle("apiv2:discoverRoles", async (_event, workingDir: string) => {
     try {
       console.log(`[apiv2:discoverRoles] Discovering in: ${workingDir}`);
-      const roles = await apiV2Discover.discoverRoles(workingDir);
+      const { discover } = getApiV2();
+      const roles = await discover.discoverRoles(workingDir);
       console.log(`[apiv2:discoverRoles] Found ${roles.length}`);
       return roles;
     } catch (error) {
@@ -795,13 +822,14 @@ function registerIpcHandlers() {
       console.log(
         `[apiv2:loadAndSyncComponents] Creating client with spaceId: "${spaceId}"`
       );
+      const { createClient, sync } = getApiV2();
       const client = createClient({ spaceId, oauthToken });
       console.log(
         `[apiv2:loadAndSyncComponents] Client created, client.spaceId: "${client.spaceId}"`
       );
 
       try {
-        const syncResult = await apiV2Sync.syncComponents(client, {
+        const syncResult = await sync.syncComponents(client, {
           components,
           presets: options?.presets ?? false,
           ssot: options?.ssot ?? false,
@@ -853,8 +881,9 @@ function registerIpcHandlers() {
       roles: unknown[],
       dryRun?: boolean
     ) => {
+      const { createClient, sync } = getApiV2();
       const client = createClient({ spaceId, oauthToken });
-      return await apiV2Sync.syncRoles(client, { roles, dryRun });
+      return await sync.syncRoles(client, { roles, dryRun });
     }
   );
 
@@ -867,8 +896,9 @@ function registerIpcHandlers() {
       datasources: unknown[],
       dryRun?: boolean
     ) => {
+      const { createClient, sync } = getApiV2();
       const client = createClient({ spaceId, oauthToken });
-      return await apiV2Sync.syncDatasources(client, {
+      return await sync.syncDatasources(client, {
         datasources,
         dryRun,
       });
@@ -884,8 +914,9 @@ function registerIpcHandlers() {
       components: unknown[],
       options?: { presets?: boolean; ssot?: boolean; dryRun?: boolean }
     ) => {
+      const { createClient, sync } = getApiV2();
       const client = createClient({ spaceId, oauthToken });
-      return await apiV2Sync.syncComponents(client, {
+      return await sync.syncComponents(client, {
         components,
         presets: options?.presets,
         ssot: options?.ssot,
@@ -903,8 +934,9 @@ function registerIpcHandlers() {
       plugins: { name: string; body: string }[],
       dryRun?: boolean
     ) => {
+      const { createClient, sync } = getApiV2();
       const client = createClient({ spaceId, oauthToken });
-      return await apiV2Sync.syncPlugins(client, { plugins, dryRun });
+      return await sync.syncPlugins(client, { plugins, dryRun });
     }
   );
 }

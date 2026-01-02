@@ -168,6 +168,9 @@ const api = {
     getVersion: (): Promise<string | null> =>
       ipcRenderer.invoke("sbmig:getVersion"),
 
+    getBundledVersion: (): Promise<string | null> =>
+      ipcRenderer.invoke("sbmig:getBundledVersion"),
+
     isInstalled: (): Promise<boolean> =>
       ipcRenderer.invoke("sbmig:isInstalled"),
 

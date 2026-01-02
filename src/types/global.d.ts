@@ -143,6 +143,7 @@ declare global {
         env: SbmigEnvironment
       ) => Promise<SbmigValidateResult>;
       getVersion: () => Promise<string | null>;
+      getBundledVersion: () => Promise<string | null>;
       isInstalled: () => Promise<boolean>;
       getDebugInfo: () => Promise<SbmigDebugInfo>;
       isRunning: () => Promise<boolean>;

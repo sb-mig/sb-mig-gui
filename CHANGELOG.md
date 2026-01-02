@@ -1,5 +1,11 @@
 # sb-mig-gui
 
+## 1.3.3
+
+### Patch Changes
+
+- 5f7c788: fix types
+
 ## 1.3.2
 
 ### Patch Changes

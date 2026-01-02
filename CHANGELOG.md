@@ -1,5 +1,11 @@
 # sb-mig-gui
 
+## 1.3.4
+
+### Patch Changes
+
+- 0376516: improve performance
+
 ## 1.3.3
 
 ### Patch Changes

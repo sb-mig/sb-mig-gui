@@ -65,7 +65,8 @@ function App() {
 
   // UI state
   const [isLoading, setIsLoading] = useState(true);
-  const [sbmigVersion, setSbmigVersion] = useState<string | null>(null);
+  const [sbmigBundledVersion, setSbmigBundledVersion] = useState<string | null>(null);
+  const [sbmigInstalledVersion, setSbmigInstalledVersion] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [validationResult, setValidationResult] = useState<{
     success: boolean;
@@ -133,12 +134,20 @@ function App() {
   useEffect(() => {
     const loadConfig = async () => {
       try {
-        // Try to get sb-mig version
+        // Get bundled sb-mig version (ships with GUI, used in API mode)
         try {
-          const version = await window.sbmigGui.sbmig.getVersion();
-          setSbmigVersion(version);
+          const bundledVersion = await window.sbmigGui.sbmig.getBundledVersion();
+          setSbmigBundledVersion(bundledVersion);
         } catch {
-          // sb-mig not available
+          // bundled version not available
+        }
+
+        // Get installed sb-mig version (from system PATH, used in CLI mode)
+        try {
+          const installedVersion = await window.sbmigGui.sbmig.getVersion();
+          setSbmigInstalledVersion(installedVersion);
+        } catch {
+          // installed version not available
         }
 
         // Load saved settings
@@ -786,7 +795,10 @@ function App() {
                 <span className="text-2xl">📦</span> Storyblok Manager
               </h1>
               <p className="text-muted-foreground text-sm mt-1">
-                sb-mig v{sbmigVersion || "unknown"} •{" "}
+                sb-mig v{executionMode === "api" 
+                  ? (sbmigBundledVersion || "unknown") + " (bundled)"
+                  : (sbmigInstalledVersion || "not installed") + " (system)"
+                } •{" "}
                 {executionMode === "api" ? "Direct API mode" : "CLI mode"}
               </p>
             </div>

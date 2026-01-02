@@ -25,6 +25,21 @@ import {
   sync as apiV2Sync,
 } from "sb-mig/api-v2";
 
+/**
+ * Get the bundled sb-mig version from node_modules
+ * This is the version that ships with the GUI and is used in API mode
+ */
+function getBundledSbmigVersion(): string | null {
+  try {
+    // Require the sb-mig package.json to get the version
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const sbmigPackage = require("sb-mig/package.json");
+    return sbmigPackage.version || null;
+  } catch {
+    return null;
+  }
+}
+
 interface LoadedComponent {
   name: string;
   filePath: string;
@@ -456,6 +471,10 @@ function registerIpcHandlers() {
 
   ipcMain.handle("sbmig:getVersion", async () => {
     return await sbmigService.getVersion();
+  });
+
+  ipcMain.handle("sbmig:getBundledVersion", () => {
+    return getBundledSbmigVersion();
   });
 
   ipcMain.handle("sbmig:isInstalled", async () => {

@@ -1,5 +1,11 @@
 # sb-mig-gui
 
+## 1.3.2
+
+### Patch Changes
+
+- e4774e6: show used sb-mig version for api mode
+
 ## 1.3.1
 
 ### Patch Changes

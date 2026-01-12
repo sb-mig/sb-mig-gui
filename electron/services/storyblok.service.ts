@@ -280,23 +280,34 @@ class StoryblokService {
     const errors: string[] = [];
     let copiedCount = 0;
 
-    // Fetch all stories with their full content
+    // Fetch all stories with their full content - batched for performance
+    // Use batches of 5 to respect API rate limits while still gaining parallelism
+    const BATCH_SIZE = 5;
     const storiesToCopy: StoryblokStory[] = [];
-    for (let i = 0; i < storyIds.length; i++) {
-      const storyId = storyIds[i];
+
+    for (let batchStart = 0; batchStart < storyIds.length; batchStart += BATCH_SIZE) {
+      const batchIds = storyIds.slice(batchStart, batchStart + BATCH_SIZE);
+
       onProgress?.({
-        current: i + 1,
+        current: batchStart + 1,
         total: storyIds.length,
-        currentStory: `Fetching story ${storyId}...`,
+        currentStory: `Fetching stories ${batchStart + 1}-${Math.min(batchStart + BATCH_SIZE, storyIds.length)}...`,
         status: "copying",
       });
 
-      try {
-        const story = await this.fetchStory(sourceSpaceId, storyId, oauthToken);
-        storiesToCopy.push(story);
-      } catch (error) {
-        errors.push(`Failed to fetch story ${storyId}: ${error}`);
-      }
+      // Fetch batch in parallel
+      const batchResults = await Promise.allSettled(
+        batchIds.map(storyId => this.fetchStory(sourceSpaceId, storyId, oauthToken))
+      );
+
+      // Process results
+      batchResults.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          storiesToCopy.push(result.value);
+        } else {
+          errors.push(`Failed to fetch story ${batchIds[index]}: ${result.reason}`);
+        }
+      });
     }
 
     // Build tree from selected stories
@@ -305,46 +316,61 @@ class StoryblokService {
     // Map of old IDs to new IDs
     const idMap = new Map<number, number>();
 
-    // Recursive function to create stories maintaining hierarchy
-    const createInOrder = async (
-      nodes: StoryTreeNode[],
+    // Helper to create a single story and recursively create its children
+    const createStoryWithChildren = async (
+      node: StoryTreeNode,
       newParentId: number | null
     ): Promise<void> => {
-      for (const node of nodes) {
-        onProgress?.({
-          current: copiedCount + 1,
-          total: storiesToCopy.length,
-          currentStory: node.name,
-          status: "copying",
-        });
+      onProgress?.({
+        current: copiedCount + 1,
+        total: storiesToCopy.length,
+        currentStory: node.name,
+        status: "copying",
+      });
 
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { id, uuid, ...storyData } = node.story;
-          const newStory = await this.createStory(
-            targetSpaceId,
-            {
-              ...storyData,
-              parent_id: newParentId,
-            },
-            oauthToken
-          );
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { id, uuid, ...storyData } = node.story;
+        const newStory = await this.createStory(
+          targetSpaceId,
+          {
+            ...storyData,
+            parent_id: newParentId,
+          },
+          oauthToken
+        );
 
-          idMap.set(node.id, newStory.id);
-          copiedCount++;
+        idMap.set(node.id, newStory.id);
+        copiedCount++;
 
-          // Recursively create children
-          if (node.children.length > 0) {
-            await createInOrder(node.children, newStory.id);
-          }
-        } catch (error) {
-          errors.push(`Failed to create "${node.name}": ${error}`);
+        // Recursively create children (in parallel batches)
+        if (node.children.length > 0) {
+          await createSiblingsInBatches(node.children, newStory.id);
         }
+      } catch (error) {
+        errors.push(`Failed to create "${node.name}": ${error}`);
       }
     };
 
-    // Start creating from root nodes
-    await createInOrder(tree, destinationParentId);
+    // Create sibling nodes in parallel batches (respects rate limits while gaining parallelism)
+    const createSiblingsInBatches = async (
+      nodes: StoryTreeNode[],
+      newParentId: number | null
+    ): Promise<void> => {
+      // Batch size of 3 to respect Storyblok's rate limit (3 req/sec for MAPI)
+      const SIBLING_BATCH_SIZE = 3;
+
+      for (let i = 0; i < nodes.length; i += SIBLING_BATCH_SIZE) {
+        const batch = nodes.slice(i, i + SIBLING_BATCH_SIZE);
+        // Create siblings in this batch in parallel
+        await Promise.all(
+          batch.map(node => createStoryWithChildren(node, newParentId))
+        );
+      }
+    };
+
+    // Start creating from root nodes (in parallel batches)
+    await createSiblingsInBatches(tree, destinationParentId);
 
     onProgress?.({
       current: copiedCount,

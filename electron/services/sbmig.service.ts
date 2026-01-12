@@ -16,10 +16,70 @@ import type { WebContents } from 'electron'
 const execAsync = promisify(exec)
 
 /**
+ * Cache entry for discovered resources with TTL
+ */
+interface DiscoveryCacheEntry<T> {
+  data: T
+  timestamp: number
+}
+
+/**
+ * In-memory cache for discovery results with 30-second TTL
+ * This avoids rescanning the filesystem on repeated discovery calls
+ */
+const discoveryCache = new Map<string, DiscoveryCacheEntry<DiscoveredComponent[]>>()
+const DISCOVERY_CACHE_TTL_MS = 30000 // 30 seconds
+
+/**
+ * Get cached discovery result if not expired
+ */
+function getCachedDiscovery(cacheKey: string): DiscoveredComponent[] | null {
+  const entry = discoveryCache.get(cacheKey)
+  if (!entry) return null
+
+  const now = Date.now()
+  if (now - entry.timestamp > DISCOVERY_CACHE_TTL_MS) {
+    discoveryCache.delete(cacheKey)
+    return null
+  }
+
+  return entry.data
+}
+
+/**
+ * Store discovery result in cache
+ */
+function setCachedDiscovery(cacheKey: string, data: DiscoveredComponent[]): void {
+  discoveryCache.set(cacheKey, {
+    data,
+    timestamp: Date.now()
+  })
+}
+
+/**
+ * Clear discovery cache (call when files change)
+ */
+export function clearDiscoveryCache(): void {
+  discoveryCache.clear()
+}
+
+/**
+ * Cached extended PATH string (computed once and reused)
+ * PATH doesn't change during app lifecycle, so caching is safe
+ */
+let cachedExtendedPath: string | null = null
+
+/**
  * Get extended PATH with common node/npm binary locations
  * This is needed because production Electron apps don't inherit shell PATH
+ * Result is cached for the app lifecycle to avoid repeated filesystem scans
  */
 function getExtendedPath(): string {
+  // Return cached value if available
+  if (cachedExtendedPath !== null) {
+    return cachedExtendedPath
+  }
+
   const home = homedir()
   const existingPath = process.env.PATH || ''
 
@@ -137,7 +197,10 @@ function getExtendedPath(): string {
   const allPaths = [...additionalPaths, ...existingPath.split(':')]
   const uniquePaths = [...new Set(allPaths.filter(Boolean))]
 
-  return uniquePaths.join(':')
+  // Cache the result for future calls
+  cachedExtendedPath = uniquePaths.join(':')
+
+  return cachedExtendedPath
 }
 
 /**
@@ -492,9 +555,19 @@ class SbMigService {
 
   /**
    * Discover local components in the working directory
+   * Results are cached for 30 seconds to avoid repeated filesystem scans
    */
   async discoverComponents(workingDir: string): Promise<DiscoveredComponent[]> {
+    // Check cache first
+    const cacheKey = `components:${workingDir}`
+    const cached = getCachedDiscovery(cacheKey)
+    if (cached) {
+      return cached
+    }
+
     const components: DiscoveredComponent[] = []
+    // Use a Set for O(1) duplicate name lookups instead of O(n) Array.find()
+    const seenNames = new Set<string>()
     const extensions = ['.sb.js', '.sb.cjs', '.sb.ts']
 
     let componentDirs = ['src', 'components', 'storyblok']
@@ -539,11 +612,15 @@ class SbMigService {
             for (const ext of extensions) {
               if (entry.name.endsWith(ext) && !entry.name.startsWith('_')) {
                 const componentName = entry.name.replace(ext, '')
-                components.push({
-                  name: componentName,
-                  filePath: fullPath,
-                  type: isExternal ? 'external' : 'local',
-                })
+                // Only add if not already seen (O(1) lookup)
+                if (!seenNames.has(componentName)) {
+                  seenNames.add(componentName)
+                  components.push({
+                    name: componentName,
+                    filePath: fullPath,
+                    type: isExternal ? 'external' : 'local',
+                  })
+                }
                 break
               }
             }
@@ -574,7 +651,9 @@ class SbMigService {
           for (const ext of extensions) {
             if (entry.name.endsWith(ext) && !entry.name.startsWith('_')) {
               const componentName = entry.name.replace(ext, '')
-              if (!components.find((c) => c.name === componentName)) {
+              // Only add if not already seen (O(1) lookup instead of O(n) Array.find)
+              if (!seenNames.has(componentName)) {
+                seenNames.add(componentName)
                 components.push({
                   name: componentName,
                   filePath: join(workingDir, entry.name),
@@ -598,13 +677,24 @@ class SbMigService {
       return a.name.localeCompare(b.name)
     })
 
+    // Cache the result before returning
+    setCachedDiscovery(cacheKey, components)
+
     return components
   }
 
   /**
    * Discover datasources in the working directory
+   * Results are cached for 30 seconds to avoid repeated filesystem scans
    */
   async discoverDatasources(workingDir: string): Promise<DiscoveredComponent[]> {
+    // Check cache first
+    const cacheKey = `datasources:${workingDir}`
+    const cached = getCachedDiscovery(cacheKey)
+    if (cached) {
+      return cached
+    }
+
     const datasources: DiscoveredComponent[] = []
     const extensions = [
       '.datasource.js',
@@ -651,13 +741,25 @@ class SbMigService {
 
     await scanDir(workingDir)
     datasources.sort((a, b) => a.name.localeCompare(b.name))
+
+    // Cache the result before returning
+    setCachedDiscovery(cacheKey, datasources)
+
     return datasources
   }
 
   /**
    * Discover roles in the working directory
+   * Results are cached for 30 seconds to avoid repeated filesystem scans
    */
   async discoverRoles(workingDir: string): Promise<DiscoveredComponent[]> {
+    // Check cache first
+    const cacheKey = `roles:${workingDir}`
+    const cached = getCachedDiscovery(cacheKey)
+    if (cached) {
+      return cached
+    }
+
     const roles: DiscoveredComponent[] = []
     const extensions = ['.sb.roles.js', '.sb.roles.cjs', '.sb.roles.ts']
 
@@ -699,6 +801,10 @@ class SbMigService {
 
     await scanDir(workingDir)
     roles.sort((a, b) => a.name.localeCompare(b.name))
+
+    // Cache the result before returning
+    setCachedDiscovery(cacheKey, roles)
+
     return roles
   }
 }

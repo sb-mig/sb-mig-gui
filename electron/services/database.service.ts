@@ -13,6 +13,12 @@ import Database from 'better-sqlite3'
 let db: Database.Database | null = null
 
 /**
+ * In-memory cache for settings to avoid repeated database queries
+ * Settings rarely change during a session, so caching is very effective
+ */
+const settingsCache = new Map<string, string | null>()
+
+/**
  * Initialize the SQLite database
  */
 export function initDatabase(): void {
@@ -45,9 +51,14 @@ export function initDatabase(): void {
 }
 
 /**
- * Get a setting value by key
+ * Get a setting value by key (uses cache for performance)
  */
 export function getSetting(key: string): string | null {
+  // Check cache first
+  if (settingsCache.has(key)) {
+    return settingsCache.get(key) ?? null
+  }
+
   if (!db) {
     console.error('[Database] Database not initialized')
     return null
@@ -55,12 +66,16 @@ export function getSetting(key: string): string | null {
 
   const stmt = db.prepare('SELECT value FROM settings WHERE key = ?')
   const row = stmt.get(key) as { value: string } | undefined
+  const value = row?.value ?? null
 
-  return row?.value ?? null
+  // Cache the result
+  settingsCache.set(key, value)
+
+  return value
 }
 
 /**
- * Set a setting value
+ * Set a setting value (also updates cache)
  */
 export function setSetting(key: string, value: string): void {
   if (!db) {
@@ -73,10 +88,13 @@ export function setSetting(key: string, value: string): void {
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `)
   stmt.run(key, value)
+
+  // Update cache
+  settingsCache.set(key, value)
 }
 
 /**
- * Delete a setting
+ * Delete a setting (also removes from cache)
  */
 export function deleteSetting(key: string): void {
   if (!db) {
@@ -86,6 +104,9 @@ export function deleteSetting(key: string): void {
 
   const stmt = db.prepare('DELETE FROM settings WHERE key = ?')
   stmt.run(key)
+
+  // Remove from cache
+  settingsCache.delete(key)
 }
 
 /**

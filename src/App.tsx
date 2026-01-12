@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Badge,
@@ -34,6 +34,14 @@ import {
  * Resource type for picker
  */
 type ResourceType = "components" | "datasources" | "roles";
+
+/**
+ * Static options for execution mode toggle (moved outside component to prevent recreation)
+ */
+const EXECUTION_MODE_OPTIONS: { value: ExecutionMode; label: string; icon: string }[] = [
+  { value: "api", label: "API", icon: "⚡" },
+  { value: "cli", label: "CLI", icon: "💻" },
+];
 
 /**
  * Current view
@@ -298,6 +306,14 @@ function App() {
   }, []);
 
   /**
+   * Handle execution mode change (memoized to prevent re-renders)
+   */
+  const handleExecutionModeChange = useCallback(async (value: string) => {
+    setExecutionMode(value as ExecutionMode);
+    await window.sbmigGui.db.setSetting("sbmig_execution_mode", value);
+  }, []);
+
+  /**
    * Execute an sb-mig command
    */
   const executeCommand = useCallback(
@@ -497,14 +513,20 @@ function App() {
   /**
    * Pre-compute selection status for each node (recomputes when nodeIdMap or selection changes)
    * Returns 'full' | 'partial' | 'none' for each node ID
+   * Optimized: Uses Set.has() directly instead of .filter().length for O(n) vs O(n²)
    */
   const selectionStatus = useMemo(() => {
     const status = new Map<number, "full" | "partial" | "none">();
 
     nodeIdMap.forEach((allIds, nodeId) => {
-      const selectedCount = allIds.filter((id) =>
-        selectedStoryIds.has(id)
-      ).length;
+      // Count selected using reduce with Set.has() - O(n) instead of filter O(n)
+      let selectedCount = 0;
+      for (const id of allIds) {
+        if (selectedStoryIds.has(id)) {
+          selectedCount++;
+        }
+      }
+
       if (selectedCount === 0) {
         status.set(nodeId, "none");
       } else if (selectedCount === allIds.length) {
@@ -839,18 +861,9 @@ function App() {
           <div className="flex items-center gap-3">
             {/* Execution Mode Toggle */}
             <ToggleGroup
-              options={[
-                { value: "api", label: "API", icon: "⚡" },
-                { value: "cli", label: "CLI", icon: "💻" },
-              ]}
+              options={EXECUTION_MODE_OPTIONS}
               value={executionMode}
-              onChange={async (value) => {
-                setExecutionMode(value as ExecutionMode);
-                await window.sbmigGui.db.setSetting(
-                  "sbmig_execution_mode",
-                  value
-                );
-              }}
+              onChange={handleExecutionModeChange}
             />
 
             {/* Status indicators */}
@@ -1071,23 +1084,22 @@ function App() {
                     }
                   />
 
-                  {/* Terminal Content */}
-                  <div
-                    ref={outputRef}
-                    className="flex-1 overflow-y-auto p-4 bg-app-950 terminal-output font-mono text-sm"
-                  >
-                    {output.length === 0 ? (
+                  {/* Terminal Content - Virtualized */}
+                  {output.length === 0 ? (
+                    <div className="flex-1 flex items-center justify-center bg-app-950">
                       <EmptyState
                         icon="📝"
                         message="No output yet. Select a space and run a command to see results here."
                         size="sm"
                       />
-                    ) : (
-                      output.map((line) => (
-                        <OutputLine key={line.id} line={line} />
-                      ))
-                    )}
-                  </div>
+                    </div>
+                  ) : (
+                    <VirtualTerminalOutput
+                      output={output}
+                      outputRef={outputRef}
+                      autoScroll={autoScroll}
+                    />
+                  )}
                 </div>
               </>
             ) : (
@@ -1584,8 +1596,9 @@ function App() {
 
 /**
  * Virtualized resource list
+ * Memoized to prevent re-renders when parent state changes but these props don't
  */
-function VirtualResourceList({
+const VirtualResourceList = memo(function VirtualResourceList({
   resources,
   selectedResources,
   onToggleSelection,
@@ -1650,12 +1663,13 @@ function VirtualResourceList({
       </div>
     </div>
   );
-}
+});
 
 /**
  * Virtualized story tree
+ * Memoized to prevent re-renders when parent state changes but these props don't
  */
-function VirtualStoryTree({
+const VirtualStoryTree = memo(function VirtualStoryTree({
   nodes,
   expandedIds,
   onToggleSelect,
@@ -1752,12 +1766,13 @@ function VirtualStoryTree({
       </div>
     </div>
   );
-}
+});
 
 /**
  * Destination folder picker
+ * Memoized to prevent re-renders when parent state changes but these props don't
  */
-function DestinationFolderPicker({
+const DestinationFolderPicker = memo(function DestinationFolderPicker({
   nodes,
   selectedPath,
   onSelect,
@@ -1835,6 +1850,81 @@ function DestinationFolderPicker({
       )}
     </div>
   );
-}
+});
+
+/**
+ * Virtualized terminal output for CLI mode
+ * Renders only visible lines for better performance with large output
+ */
+const VirtualTerminalOutput = memo(function VirtualTerminalOutput({
+  output,
+  outputRef,
+  autoScroll,
+}: {
+  output: { id: number; type: "stdout" | "stderr" | "info" | "error" | "complete"; data: string; timestamp: number }[];
+  outputRef: React.RefObject<HTMLDivElement | null>;
+  autoScroll: boolean;
+}) {
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer({
+    count: output.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 20, // Approximate line height
+    overscan: 20, // Render extra lines for smooth scrolling
+  });
+
+  // Auto-scroll to bottom when new output arrives
+  useEffect(() => {
+    if (autoScroll && parentRef.current) {
+      requestAnimationFrame(() => {
+        if (parentRef.current) {
+          parentRef.current.scrollTop = parentRef.current.scrollHeight;
+        }
+      });
+    }
+  }, [output.length, autoScroll]);
+
+  // Sync the external ref for parent component access
+  useEffect(() => {
+    if (outputRef && "current" in outputRef) {
+      (outputRef as React.MutableRefObject<HTMLDivElement | null>).current =
+        parentRef.current;
+    }
+  }, [outputRef]);
+
+  return (
+    <div
+      ref={parentRef}
+      className="flex-1 overflow-y-auto p-4 bg-app-950 terminal-output font-mono text-sm"
+    >
+      <div
+        style={{
+          height: `${virtualizer.getTotalSize()}px`,
+          width: "100%",
+          position: "relative",
+        }}
+      >
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const line = output[virtualRow.index];
+          return (
+            <div
+              key={line.id}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                transform: `translateY(${virtualRow.start}px)`,
+              }}
+            >
+              <OutputLine line={line} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+});
 
 export default App;

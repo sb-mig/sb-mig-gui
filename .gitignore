@@ -36,6 +36,9 @@ build/icons/
 # Cursor IDE
 .cursor/*
 !.cursor/rules/
+
+# Claude Code
+.claude/
 *.suo
 *.ntvs*
 *.njsproj

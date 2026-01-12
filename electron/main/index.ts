@@ -67,9 +67,71 @@ interface LoadedComponent {
 }
 
 /**
+ * Compile a single TypeScript file using Sucrase
+ */
+async function compileSingleFile(
+  tsFile: string,
+  cacheDir: string,
+  readFileFn: (path: string, encoding: 'utf-8') => Promise<string>,
+  sucraseTransform: SucraseTransform
+): Promise<{ tsFile: string; outputPath: string } | { tsFile: string; error: string }> {
+  const componentName = basename(tsFile).replace(/\.ts$/, "");
+  const outputPath = join(cacheDir, `${componentName}.cjs`);
+
+  try {
+    // Read the TypeScript source
+    const source = await readFileFn(tsFile, "utf-8");
+
+    // Transform using Sucrase (synchronous, pure JS)
+    const result = sucraseTransform(source, {
+      transforms: ["typescript"],
+      disableESTransforms: true, // Keep ES modules syntax
+    });
+
+    // Convert ES modules to CommonJS manually
+    let code = result.code;
+
+    // Replace export default with module.exports =
+    code = code.replace(/export default /, "module.exports = ");
+
+    // Replace named exports: export const X = ... -> exports.X = ...
+    code = code.replace(/export const (\w+)/g, "exports.$1");
+    code = code.replace(/export let (\w+)/g, "exports.$1");
+    code = code.replace(/export var (\w+)/g, "exports.$1");
+    code = code.replace(/export function (\w+)/g, "exports.$1 = function $1");
+
+    // Replace ES imports with require
+    // import X from 'y' -> const X = require('y').default || require('y')
+    code = code.replace(
+      /import (\w+) from ['"]([^'"]+)['"]/g,
+      "const $1 = require('$2').default || require('$2')"
+    );
+    // import { X } from 'y' -> const { X } = require('y')
+    code = code.replace(
+      /import \{([^}]+)\} from ['"]([^'"]+)['"]/g,
+      "const {$1} = require('$2')"
+    );
+    // import * as X from 'y' -> const X = require('y')
+    code = code.replace(
+      /import \* as (\w+) from ['"]([^'"]+)['"]/g,
+      "const $1 = require('$2')"
+    );
+
+    // Write the compiled output
+    await writeFile(outputPath, code, "utf-8");
+
+    return { tsFile, outputPath };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    return { tsFile, error: errorMsg };
+  }
+}
+
+/**
  * Precompile TypeScript files using Sucrase
  * Sucrase is a pure JavaScript transpiler - no native code, no WASM, no child processes
  * Works perfectly in packaged Electron apps
+ * Files are compiled in parallel batches for better performance
  */
 async function precompileWithSucrase(
   tsFiles: string[],
@@ -89,68 +151,31 @@ async function precompileWithSucrase(
   const { readFile } = await import("fs/promises");
   const sucraseTransform = getSucraseTransform();
 
-  for (const tsFile of tsFiles) {
-    const componentName = basename(tsFile).replace(/\.ts$/, "");
-    const outputPath = join(cacheDir, `${componentName}.cjs`);
+  // Process files in parallel batches for better performance
+  // Batch size of 5 balances parallelism with I/O contention
+  const BATCH_SIZE = 5;
 
-    onProgress?.(`Compiling ${componentName}...`);
-    console.log(
-      `[precompileWithSucrase] Compiling: ${tsFile} -> ${outputPath}`
+  for (let i = 0; i < tsFiles.length; i += BATCH_SIZE) {
+    const batch = tsFiles.slice(i, i + BATCH_SIZE);
+    const batchNames = batch.map(f => basename(f).replace(/\.ts$/, "")).join(", ");
+
+    onProgress?.(`Compiling batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batchNames}...`);
+    console.log(`[precompileWithSucrase] Compiling batch: ${batchNames}`);
+
+    // Compile batch in parallel
+    const batchResults = await Promise.all(
+      batch.map(tsFile => compileSingleFile(tsFile, cacheDir, readFile, sucraseTransform))
     );
 
-    try {
-      // Read the TypeScript source
-      const source = await readFile(tsFile, "utf-8");
-
-      // Transform using Sucrase (synchronous, pure JS)
-      const result = sucraseTransform(source, {
-        transforms: ["typescript"],
-        disableESTransforms: true, // Keep ES modules syntax
-      });
-
-      // Convert ES modules to CommonJS manually
-      let code = result.code;
-
-      // Replace export default with module.exports =
-      code = code.replace(/export default /, "module.exports = ");
-
-      // Replace named exports: export const X = ... -> exports.X = ...
-      code = code.replace(/export const (\w+)/g, "exports.$1");
-      code = code.replace(/export let (\w+)/g, "exports.$1");
-      code = code.replace(/export var (\w+)/g, "exports.$1");
-      code = code.replace(/export function (\w+)/g, "exports.$1 = function $1");
-
-      // Replace ES imports with require
-      // import X from 'y' -> const X = require('y').default || require('y')
-      code = code.replace(
-        /import (\w+) from ['"]([^'"]+)['"]/g,
-        "const $1 = require('$2').default || require('$2')"
-      );
-      // import { X } from 'y' -> const { X } = require('y')
-      code = code.replace(
-        /import \{([^}]+)\} from ['"]([^'"]+)['"]/g,
-        "const {$1} = require('$2')"
-      );
-      // import * as X from 'y' -> const X = require('y')
-      code = code.replace(
-        /import \* as (\w+) from ['"]([^'"]+)['"]/g,
-        "const $1 = require('$2')"
-      );
-
-      // Write the compiled output
-      await writeFile(outputPath, code, "utf-8");
-
-      console.log(
-        `[precompileWithSucrase] Successfully compiled: ${componentName}`
-      );
-      compiled.set(tsFile, outputPath);
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error(
-        `[precompileWithSucrase] Failed to compile ${componentName}:`,
-        error
-      );
-      errors.push({ file: tsFile, error: errorMsg });
+    // Process results
+    for (const result of batchResults) {
+      if ('outputPath' in result) {
+        console.log(`[precompileWithSucrase] Successfully compiled: ${basename(result.tsFile)}`);
+        compiled.set(result.tsFile, result.outputPath);
+      } else {
+        console.error(`[precompileWithSucrase] Failed to compile ${basename(result.tsFile)}:`, result.error);
+        errors.push({ file: result.tsFile, error: result.error });
+      }
     }
   }
 

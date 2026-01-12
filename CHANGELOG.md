@@ -1,5 +1,11 @@
 # sb-mig-gui
 
+## 1.4.0
+
+### Minor Changes
+
+- 9727c1e: improve performance of the app
+
 ## 1.3.4
 
 ### Patch Changes
